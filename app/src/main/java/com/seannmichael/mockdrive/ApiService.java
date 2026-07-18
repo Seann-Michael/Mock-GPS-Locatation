@@ -80,6 +80,13 @@ public class ApiService extends Service {
                 respond(socket, 200, new JSONObject().put("ok", true).put("port", 8765).toString());
             } else if ("GET".equals(method) && "/api/v1/trips".equals(path)) {
                 respond(socket, 200, TripStore.all(this).toString());
+            } else if ("POST".equals(method) && "/api/v1/google-business/resolve".equals(path)) {
+                JSONObject j = new JSONObject(body);
+                if (j.has("googleApiKey")) GooglePlacesEngine.setApiKey(this, j.optString("googleApiKey"));
+                JSONObject match = GooglePlacesEngine.findTarget(this,
+                        j.optString("searchQuery"), j.optString("targetBusinessName"),
+                        j.optString("targetPlaceId"), j.optString("addressHint"));
+                respond(socket, 200, match.toString());
             } else if ("POST".equals(method) && "/api/v1/location".equals(path)) {
                 JSONObject j = new JSONObject(body);
                 Intent s = new Intent(this, MockLocationService.class).setAction(MockLocationService.ACTION_TELEPORT)
