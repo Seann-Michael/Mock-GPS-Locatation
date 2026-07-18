@@ -31,12 +31,5 @@
         <service android:name=".ApiService" android:exported="false" android:foregroundServiceType="dataSync" />
         <receiver android:name=".TripAlarmReceiver" android:exported="false" />
         <receiver android:name=".BootReceiver" android:exported="true"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter></receiver>
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.files"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/diagnostic_file_paths" />
-        </provider>
     </application>
 </manifest>
