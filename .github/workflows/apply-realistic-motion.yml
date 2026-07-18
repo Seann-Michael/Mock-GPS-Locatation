@@ -1,0 +1,41 @@
+name: Apply realistic motion model
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - tools/apply_realistic_motion_model.py
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" .
+          git checkout main
+
+      - name: Apply migration
+        run: python3 tools/apply_realistic_motion_model.py
+
+      - name: Commit source update
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/seannmichael/mockdrive/MockLocationService.java
+          if git diff --cached --quiet; then
+            echo "No changes needed."
+            exit 0
+          fi
+          git commit -m "Add realistic vehicle motion model"
+          git push origin main
