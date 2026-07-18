@@ -225,9 +225,11 @@ public class MockLocationService extends Service {
 
     private void enableProvider(){
         enableSingleProvider(LocationManager.GPS_PROVIDER);
-        // The network provider (and the fused provider that reads from it) is a best-effort bonus so
-        // apps that don't request GPS directly still see the mock. It must never break the GPS path.
+        // Google Maps and most modern apps read the FUSED provider, not raw GPS. Injecting only into GPS
+        // makes Maps show the first fix and then report "signal lost" seconds later. Mock the network and
+        // (on Android 12+) fused providers too. These are best-effort and must never break the GPS path.
         try{enableSingleProvider(LocationManager.NETWORK_PROVIDER);}catch(Exception ignored){}
+        if(Build.VERSION.SDK_INT>=31)try{enableSingleProvider(LocationManager.FUSED_PROVIDER);}catch(Exception ignored){}
     }
 
     private void enableSingleProvider(String provider){
@@ -241,6 +243,7 @@ public class MockLocationService extends Service {
     private void inject(Point p,float bearing,float speed,float accuracy){
         setProviderLocation(LocationManager.GPS_PROVIDER,p,bearing,speed,accuracy);
         try{setProviderLocation(LocationManager.NETWORK_PROVIDER,p,bearing,speed,accuracy);}catch(Exception ignored){}
+        if(Build.VERSION.SDK_INT>=31)try{setProviderLocation(LocationManager.FUSED_PROVIDER,p,bearing,speed,accuracy);}catch(Exception ignored){}
     }
 
     private void setProviderLocation(String provider,Point p,float bearing,float speed,float accuracy){
