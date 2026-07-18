@@ -1,0 +1,39 @@
+name: Apply Fused subscription keepalive
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - tools/apply_fused_subscription_keepalive.py
+      - .github/workflows/apply-fused-subscription-keepalive.yml
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" .
+          git checkout main
+
+      - name: Apply source migration
+        run: python3 tools/apply_fused_subscription_keepalive.py
+
+      - name: Commit source changes
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No source changes required."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/seannmichael/mockdrive/MockLocationService.java
+          git commit -m "Keep Fused subscription active during navigation"
+          git push origin main
