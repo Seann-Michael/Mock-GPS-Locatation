@@ -12,6 +12,7 @@ import android.location.Location;
 import android.location.LocationManager;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.PowerManager;
 import android.os.SystemClock;
 
 import org.json.JSONArray;
@@ -19,7 +20,6 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Random;
 
 public class MockLocationService extends Service {
     public static final String ACTION_START="com.seannmichael.mockdrive.START";
@@ -31,61 +31,88 @@ public class MockLocationService extends Service {
 
     private static final String CHANNEL="mock_drive";
     private static final int NOTICE=42;
+    private static final String PREFS="mock_drive_service";
+    private static final String KEY_ACTIVE_TRIP="active_trip";
+
     private volatile boolean running;
     private Thread worker;
     private LocationManager manager;
     private Point heldPoint;
+    private PowerManager.WakeLock wakeLock;
 
     @Override public void onCreate(){
         super.onCreate();
         manager=(LocationManager)getSystemService(Context.LOCATION_SERVICE);
+        PowerManager pm=(PowerManager)getSystemService(Context.POWER_SERVICE);
+        wakeLock=pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"MockDrive:Navigation");
+        wakeLock.setReferenceCounted(false);
         createChannel();
     }
 
     @Override public int onStartCommand(Intent intent,int flags,int startId){
-        if(intent==null)return START_STICKY;
+        if(intent==null){
+            String saved=getSharedPreferences(PREFS,MODE_PRIVATE).getString(KEY_ACTIVE_TRIP,"");
+            if(!saved.isEmpty()){
+                startForeground(NOTICE,notice("Restoring navigation"));
+                startTrip(saved);
+                return START_REDELIVER_INTENT;
+            }
+            return START_NOT_STICKY;
+        }
         String action=intent.getAction();
         if(ACTION_STOP.equals(action)){
             stopEverything();
             return START_NOT_STICKY;
         }
         if(ACTION_TELEPORT.equals(action)){
+            getSharedPreferences(PREFS,MODE_PRIVATE).edit().remove(KEY_ACTIVE_TRIP).apply();
             startForeground(NOTICE,notice("Holding mock location"));
             teleport(intent.getDoubleExtra(EXTRA_LAT,0),intent.getDoubleExtra(EXTRA_LON,0));
             return START_STICKY;
         }
         if(ACTION_START.equals(action)){
+            String tripJson=intent.getStringExtra(EXTRA_TRIP);
+            if(tripJson!=null&&!tripJson.isEmpty()){
+                getSharedPreferences(PREFS,MODE_PRIVATE).edit().putString(KEY_ACTIVE_TRIP,tripJson).apply();
+            }
             startForeground(NOTICE,notice("Starting navigation"));
-            startTrip(intent.getStringExtra(EXTRA_TRIP));
+            startTrip(tripJson);
+            return START_REDELIVER_INTENT;
         }
         return START_STICKY;
     }
 
+    private void acquireWakeLock(){if(wakeLock!=null&&!wakeLock.isHeld())wakeLock.acquire();}
+    private void releaseWakeLock(){if(wakeLock!=null&&wakeLock.isHeld())wakeLock.release();}
+
     private void teleport(double lat,double lon){
         stopWorker();
-        try{
-            enableProvider();
-            heldPoint=new Point(lat,lon);
-            running=true;
-            inject(heldPoint,0f,0f,3f);
-            worker=new Thread(()->{
+        acquireWakeLock();
+        heldPoint=new Point(lat,lon);
+        running=true;
+        worker=new Thread(()->{
+            try{
+                enableProvider();
                 while(running&&heldPoint!=null){
-                    try{
-                        inject(heldPoint,0f,0f,3f);
-                        Thread.sleep(1000);
-                    }catch(InterruptedException e){
-                        return;
-                    }
+                    safeInject(heldPoint,0f,0f,3f);
+                    Thread.sleep(1000);
                 }
-            },"mock-hold");
-            worker.start();
-        }catch(SecurityException e){
-            updateNotice("Select Mock Drive as mock location app");
-        }
+            }catch(InterruptedException e){
+                Thread.currentThread().interrupt();
+            }catch(SecurityException e){
+                updateNotice("Select Mock Drive as mock location app");
+            }finally{
+                if(!running)releaseWakeLock();
+            }
+        },"mock-hold");
+        worker.start();
     }
 
     private void startTrip(String tripJson){
         stopWorker();
+        acquireWakeLock();
+        running=true;
+        heldPoint=null;
         worker=new Thread(()->{
             String id="";
             try{
@@ -97,9 +124,7 @@ public class MockLocationService extends Service {
                 JSONObject first=waypoints.getJSONObject(0);
                 Point startPoint=new Point(first.getDouble("latitude"),first.getDouble("longitude"));
                 enableProvider();
-                running=true;
-                heldPoint=null;
-                inject(startPoint,0f,0f,3f);
+                safeInject(startPoint,0f,0f,3f);
                 updateNotice("Preparing road route");
                 if(!id.isEmpty())TripStore.updateStatus(this,id,"routing");
 
@@ -107,44 +132,24 @@ public class MockLocationService extends Service {
                 if(points.size()<2)throw new Exception("Route is empty");
                 if(!running)return;
 
-                double averageMph=clamp(trip.optDouble("averageSpeedMph",35),1,150);
-                double variation=clamp(trip.optDouble("speedVariationPercent",0),0,80)/100.0;
-                int updateMs=(int)clamp(trip.optInt("gpsUpdateIntervalMs",1000),200,10000);
-                boolean randomStops=trip.optBoolean("randomStops",false);
-                int randomStopChance=trip.optInt("randomStopChancePercent",2);
-                int randomStopMax=trip.optInt("randomStopMaxSeconds",20);
+                double mph=clamp(trip.optDouble("averageSpeedMph",35),1,150);
+                double metersPerSecond=mph*0.44704;
+                int updateMs=(int)clamp(trip.optInt("gpsUpdateIntervalMs",1000),500,5000);
                 boolean hold=trip.optBoolean("holdAtDestination",true);
                 float accuracy=(float)clamp(trip.optDouble("accuracyMeters",3),1,100);
-                Random random=new Random();
 
                 if(!id.isEmpty())TripStore.updateStatus(this,id,"active");
                 int segment=0;
                 double onSegment=0;
                 Point current=points.get(0);
-                inject(current,0f,0f,accuracy);
+                safeInject(current,0f,(float)metersPerSecond,accuracy);
 
                 while(running&&segment<points.size()-1){
-                    if(randomStops&&random.nextInt(100)<randomStopChance){
-                        int seconds=1+random.nextInt(Math.max(1,randomStopMax));
-                        for(int s=0;s<seconds&&running;s++){
-                            updateNotice("Traffic stop: "+(seconds-s)+" sec");
-                            inject(current,0f,0f,accuracy);
-                            Thread.sleep(1000);
-                        }
-                    }
-
-                    double mph=averageMph*(1+((random.nextDouble()*2-1)*variation));
-                    double metersPerSecond=mph*0.44704;
                     double step=metersPerSecond*updateMs/1000.0;
                     Point from=points.get(segment);
                     Point to=points.get(segment+1);
                     double length=distance(from,to);
-
-                    if(length<0.2){
-                        segment++;
-                        onSegment=0;
-                        continue;
-                    }
+                    if(length<0.2){segment++;onSegment=0;continue;}
 
                     onSegment+=step;
                     while(onSegment>=length&&segment<points.size()-1){
@@ -161,35 +166,51 @@ public class MockLocationService extends Service {
                     to=points.get(segment+1);
                     length=distance(from,to);
                     current=interpolate(from,to,Math.min(1,onSegment/Math.max(0.1,length)));
-                    inject(current,bearing(from,to),(float)metersPerSecond,accuracy);
-                    updateNotice("Driving "+Math.round(averageMph)+" mph");
+                    safeInject(current,bearing(from,to),(float)metersPerSecond,accuracy);
+                    updateNotice("Driving "+Math.round(mph)+" mph");
                     Thread.sleep(updateMs);
                 }
 
                 if(running){
                     current=points.get(points.size()-1);
-                    inject(current,0f,0f,accuracy);
+                    safeInject(current,0f,0f,accuracy);
                     if(!id.isEmpty())TripStore.updateStatus(this,id,"completed");
+                    getSharedPreferences(PREFS,MODE_PRIVATE).edit().remove(KEY_ACTIVE_TRIP).apply();
                     updateNotice("Destination reached");
                     if(hold){
                         heldPoint=current;
-                        while(running){
-                            inject(heldPoint,0f,0f,accuracy);
-                            Thread.sleep(1000);
-                        }
+                        while(running){safeInject(heldPoint,0f,0f,accuracy);Thread.sleep(1000);}
                     }
                 }
-            }catch(InterruptedException ignored){
+            }catch(InterruptedException e){
                 Thread.currentThread().interrupt();
             }catch(SecurityException e){
                 updateNotice("Select Mock Drive as mock location app");
                 if(!id.isEmpty())TripStore.updateStatus(this,id,"failed");
             }catch(Exception e){
-                updateNotice("Trip failed: "+e.getMessage());
+                updateNotice("Trip failed: "+(e.getMessage()==null?e.getClass().getSimpleName():e.getMessage()));
                 if(!id.isEmpty())TripStore.updateStatus(this,id,"failed");
+            }finally{
+                if(!running)releaseWakeLock();
             }
         },"mock-trip");
         worker.start();
+    }
+
+    private void safeInject(Point p,float bearing,float speed,float accuracy){
+        RuntimeException last=null;
+        for(int attempt=0;attempt<2;attempt++){
+            try{
+                inject(p,bearing,speed,accuracy);
+                return;
+            }catch(SecurityException e){
+                throw e;
+            }catch(RuntimeException e){
+                last=e;
+                enableProvider();
+            }
+        }
+        if(last!=null)throw last;
     }
 
     private List<Point> parse(JSONArray a)throws Exception{
@@ -203,7 +224,9 @@ public class MockLocationService extends Service {
 
     private void enableProvider(){
         try{manager.removeTestProvider(LocationManager.GPS_PROVIDER);}catch(Exception ignored){}
-        manager.addTestProvider(LocationManager.GPS_PROVIDER,false,false,false,false,true,true,true,Criteria.POWER_LOW,Criteria.ACCURACY_FINE);
+        try{
+            manager.addTestProvider(LocationManager.GPS_PROVIDER,false,false,false,false,true,true,true,Criteria.POWER_LOW,Criteria.ACCURACY_FINE);
+        }catch(IllegalArgumentException ignored){}
         manager.setTestProviderEnabled(LocationManager.GPS_PROVIDER,true);
     }
 
@@ -226,8 +249,10 @@ public class MockLocationService extends Service {
     }
 
     private void stopEverything(){
+        getSharedPreferences(PREFS,MODE_PRIVATE).edit().remove(KEY_ACTIVE_TRIP).apply();
         stopWorker();
         try{manager.removeTestProvider(LocationManager.GPS_PROVIDER);}catch(Exception ignored){}
+        releaseWakeLock();
         stopForeground(true);
         stopSelf();
     }
@@ -235,8 +260,15 @@ public class MockLocationService extends Service {
     private void stopWorker(){
         running=false;
         heldPoint=null;
-        if(worker!=null)worker.interrupt();
+        Thread old=worker;
         worker=null;
+        if(old!=null)old.interrupt();
+    }
+
+    @Override public void onDestroy(){
+        stopWorker();
+        releaseWakeLock();
+        super.onDestroy();
     }
 
     private void createChannel(){
@@ -252,10 +284,7 @@ public class MockLocationService extends Service {
         return b.setContentTitle("Mock Drive").setContentText(text).setSmallIcon(android.R.drawable.ic_menu_mylocation).setOngoing(true).setContentIntent(pi).build();
     }
 
-    private void updateNotice(String text){
-        ((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(NOTICE,notice(text));
-    }
-
+    private void updateNotice(String text){((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(NOTICE,notice(text));}
     private static double clamp(double v,double min,double max){return Math.max(min,Math.min(max,v));}
     private static double distance(Point a,Point b){double earth=6371000,p1=Math.toRadians(a.lat),p2=Math.toRadians(b.lat),dp=Math.toRadians(b.lat-a.lat),dl=Math.toRadians(b.lon-a.lon);double h=Math.sin(dp/2)*Math.sin(dp/2)+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)*Math.sin(dl/2);return earth*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h));}
     private static Point interpolate(Point a,Point b,double f){return new Point(a.lat+(b.lat-a.lat)*f,a.lon+(b.lon-a.lon)*f);}
