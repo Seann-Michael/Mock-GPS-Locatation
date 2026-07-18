@@ -27,11 +27,13 @@ import java.text.DateFormat;
 import java.util.Calendar;
 
 public class MainActivity extends Activity {
-    private EditText waypoints, speed, variation, interval, schedule, teleportLat, teleportLon, address, apiToken, businessDestination;
+    private EditText waypoints, speed, variation, interval, schedule, teleportLat, teleportLon, address, apiToken;
+    private EditText businessDestination, googleApiKey, googleSearchQuery, targetBusinessName, targetPlaceId, targetAddressHint;
     private CheckBox randomStops, holdDestination;
     private Spinner recurrence, speedProfile;
     private TextView status, queue;
     private long scheduledEpoch;
+    private JSONObject matchedGoogleBusiness;
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -39,7 +41,7 @@ public class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         int p = dp(16); root.setPadding(p,p,p,p);
-        addLabel(root, "Mock Drive 3", 28);
+        addLabel(root, "Mock Drive 4", 28);
         addLabel(root, "Select this app under Developer options → Select mock location app.", 15);
 
         Button dev = button(root, "Open Developer Options");
@@ -52,14 +54,26 @@ public class MainActivity extends Activity {
         teleportLon = field(root, "Longitude", "-81.8552");
         button(root, "Set Location Now").setOnClickListener(v -> teleport());
 
-        addLabel(root, "Google Business destination", 20);
-        addLabel(root, "Enter the exact Google Business Profile name plus city/state or its street address. The resolved coordinates are added as the final destination.", 13);
+        addLabel(root, "Google search result business destination", 20);
+        addLabel(root, "The app searches Google Places for the keyword and identifies the intended business by Place ID or business identity. Result position does not matter.", 13);
+        googleApiKey = field(root, "Google Places API key", GooglePlacesEngine.getApiKey(this));
+        button(root, "Save Google API Key").setOnClickListener(v -> {
+            GooglePlacesEngine.setApiKey(this, googleApiKey.getText().toString());
+            toast("Google Places API key saved");
+        });
+        googleSearchQuery = field(root, "Search phrase, e.g. Medina junk removal", "");
+        targetBusinessName = field(root, "Target business name, e.g. 1st Choice Junk Removal", "");
+        targetPlaceId = field(root, "Target Google Place ID (preferred, optional)", "");
+        targetAddressHint = field(root, "Target address/city hint", "Medina, Ohio");
+        button(root, "Find Exact Business in Google Results").setOnClickListener(v -> findGoogleBusiness());
+
+        addLabel(root, "Basic business destination fallback", 20);
         businessDestination = field(root, "Business name and city/state", "");
-        button(root, "Resolve Business as Destination").setOnClickListener(v -> resolveBusinessDestination());
+        button(root, "Resolve with OpenStreetMap").setOnClickListener(v -> resolveBusinessDestination());
 
         addLabel(root, "Multi-stop road trip", 20);
-        addLabel(root, "One waypoint per line: latitude,longitude,stopSeconds. Include the start and any intermediate stops.", 14);
-        waypoints = field(root, "Waypoints", "41.1432,-81.8552,0\n41.1200,-81.7200,60\n41.0814,-81.5190,0");
+        addLabel(root, "One waypoint per line: latitude,longitude,stopSeconds. Include the start and intermediate stops. A matched Google business is automatically used as the final destination.", 14);
+        waypoints = field(root, "Waypoints", "41.1432,-81.8552,0\n41.1200,-81.7200,60");
         waypoints.setMinLines(5);
         speed = field(root, "Average / maximum speed mph", "40");
         variation = field(root, "Speed variation percent", "8");
@@ -68,8 +82,7 @@ public class MainActivity extends Activity {
         randomStops = check(root, "Simulate random traffic stops", true);
         holdDestination = check(root, "Hold location at destination", true);
 
-        Button choose = button(root, "Choose First Schedule Date/Time");
-        choose.setOnClickListener(v -> chooseSchedule());
+        button(root, "Choose First Schedule Date/Time").setOnClickListener(v -> chooseSchedule());
         schedule = field(root, "Scheduled time", "Start immediately");
         schedule.setFocusable(false);
         recurrence = spinner(root, "Repeat schedule", new String[]{"None", "Daily", "Weekly", "Monthly"});
@@ -85,7 +98,7 @@ public class MainActivity extends Activity {
         button(root, "Save API Token").setOnClickListener(v -> { TripStore.setToken(this, apiToken.getText().toString().trim()); toast("Token saved"); });
         button(root, "Start API on Port 8765").setOnClickListener(v -> api(true));
         button(root, "Stop API").setOnClickListener(v -> api(false));
-        addLabel(root, "For access outside the local network, install Tailscale on this phone and the controlling device, then call http://PHONE_TAILSCALE_IP:8765 with Authorization: Bearer <token>. Do not expose port 8765 directly to the public internet.", 13);
+        addLabel(root, "Use Tailscale for access outside the local network. Do not expose port 8765 directly to the public internet.", 13);
 
         addLabel(root, "Trip queue", 20);
         button(root, "Refresh Queue").setOnClickListener(v -> refreshQueue());
@@ -108,7 +121,16 @@ public class MainActivity extends Activity {
             p.put("stopSeconds", x.length > 2 ? Integer.parseInt(x[2].trim()) : 0);
             w.put(p);
         }
-        if (w.length() < 2) throw new Exception("Enter at least a start and destination");
+        if (matchedGoogleBusiness != null) {
+            JSONObject destination = new JSONObject();
+            destination.put("latitude", matchedGoogleBusiness.getDouble("latitude"));
+            destination.put("longitude", matchedGoogleBusiness.getDouble("longitude"));
+            destination.put("stopSeconds", 0);
+            destination.put("googlePlaceId", matchedGoogleBusiness.optString("placeId"));
+            destination.put("businessName", matchedGoogleBusiness.optString("businessName"));
+            w.put(destination);
+        }
+        if (w.length() < 2) throw new Exception("Enter a start and select a destination");
         JSONObject t = new JSONObject();
         t.put("name", "Trip " + DateFormat.getDateTimeInstance().format(System.currentTimeMillis()));
         t.put("waypoints", w);
@@ -123,36 +145,33 @@ public class MainActivity extends Activity {
         t.put("startAtEpochMs", scheduledEpoch);
         t.put("recurrence", recurrenceValue());
         t.put("destinationBusiness", businessDestination.getText().toString().trim());
+        if (matchedGoogleBusiness != null) t.put("googleBusiness", matchedGoogleBusiness);
         return t;
     }
 
-    private String recurrenceValue() {
-        int i = recurrence.getSelectedItemPosition();
-        return i == 1 ? "daily" : i == 2 ? "weekly" : i == 3 ? "monthly" : "none";
+    private void findGoogleBusiness() {
+        GooglePlacesEngine.setApiKey(this, googleApiKey.getText().toString());
+        status.setText("Searching Google results and matching the target business…");
+        new Thread(() -> {
+            try {
+                JSONObject match = GooglePlacesEngine.findTarget(this,
+                        googleSearchQuery.getText().toString(), targetBusinessName.getText().toString(),
+                        targetPlaceId.getText().toString(), targetAddressHint.getText().toString());
+                matchedGoogleBusiness = match;
+                runOnUiThread(() -> status.setText("Matched Google business: " + match.optString("businessName") +
+                        "\n" + match.optString("formattedAddress") + "\nPlace ID: " + match.optString("placeId") +
+                        "\nThis verified listing will be the final destination."));
+            } catch (Exception e) {
+                runOnUiThread(() -> status.setText("Google business match failed: " + e.getMessage()));
+            }
+        }, "google-business-match").start();
     }
 
-    private String profileValue() {
-        int i = speedProfile.getSelectedItemPosition();
-        return i == 0 ? "road_aware" : i == 2 ? "urban" : i == 3 ? "highway" : "fixed";
-    }
+    private String recurrenceValue() { int i = recurrence.getSelectedItemPosition(); return i == 1 ? "daily" : i == 2 ? "weekly" : i == 3 ? "monthly" : "none"; }
+    private String profileValue() { int i = speedProfile.getSelectedItemPosition(); return i == 0 ? "road_aware" : i == 2 ? "urban" : i == 3 ? "highway" : "fixed"; }
 
-    private void startNow() {
-        try {
-            JSONObject t = TripStore.save(this, buildTrip());
-            TripScheduler.launch(this, t);
-            status.setText("Trip started. GPS will update continuously along actual roads.");
-            refreshQueue();
-        } catch (Exception e) { toast(e.getMessage()); }
-    }
-
-    private void saveTrip() {
-        try {
-            JSONObject t = buildTrip();
-            if (scheduledEpoch > 0) TripScheduler.schedule(this, t); else TripStore.save(this, t);
-            status.setText(scheduledEpoch > 0 ? "Trip scheduled with recurrence: " + recurrenceValue() : "Trip queued.");
-            refreshQueue();
-        } catch (Exception e) { toast(e.getMessage()); }
-    }
+    private void startNow() { try { JSONObject t = TripStore.save(this, buildTrip()); TripScheduler.launch(this, t); status.setText("Trip started along actual roads."); refreshQueue(); } catch (Exception e) { toast(e.getMessage()); } }
+    private void saveTrip() { try { JSONObject t = buildTrip(); if (scheduledEpoch > 0) TripScheduler.schedule(this, t); else TripStore.save(this, t); status.setText(scheduledEpoch > 0 ? "Trip scheduled with recurrence: " + recurrenceValue() : "Trip queued."); refreshQueue(); } catch (Exception e) { toast(e.getMessage()); } }
 
     private void teleport() {
         try {
@@ -166,7 +185,6 @@ public class MainActivity extends Activity {
 
     private void geocodeIntoTeleport() { geocode(address.getText().toString().trim(), false); }
     private void resolveBusinessDestination() { geocode(businessDestination.getText().toString().trim(), true); }
-
     private void geocode(String q, boolean appendDestination) {
         if (q.isEmpty()) return;
         status.setText("Finding location…");
@@ -178,7 +196,7 @@ public class MainActivity extends Activity {
                         String existing = waypoints.getText().toString().trim();
                         String line = p.optDouble("latitude") + "," + p.optDouble("longitude") + ",0";
                         waypoints.setText(existing.isEmpty() ? line : existing + "\n" + line);
-                        status.setText("Business destination added: " + p.optString("label"));
+                        status.setText("Fallback destination added: " + p.optString("label"));
                     } else {
                         teleportLat.setText(String.valueOf(p.optDouble("latitude")));
                         teleportLon.setText(String.valueOf(p.optDouble("longitude")));
@@ -198,20 +216,10 @@ public class MainActivity extends Activity {
     }
 
     private void command(String action) { startService(new Intent(this, MockLocationService.class).setAction(action)); }
-    private void api(boolean start) {
-        Intent i = new Intent(this, ApiService.class).setAction(start ? ApiService.ACTION_START : ApiService.ACTION_STOP);
-        if (start && Build.VERSION.SDK_INT >= 26) startForegroundService(i); else startService(i);
-        status.setText(start ? "API running on port 8765" : "API stopped");
-    }
+    private void api(boolean start) { Intent i = new Intent(this, ApiService.class).setAction(start ? ApiService.ACTION_START : ApiService.ACTION_STOP); if (start && Build.VERSION.SDK_INT >= 26) startForegroundService(i); else startService(i); status.setText(start ? "API running on port 8765" : "API stopped"); }
     private void refreshQueue() { try { queue.setText(TripStore.all(this).toString(2)); } catch (Exception e) { queue.setText(TripStore.all(this).toString()); } }
-
-    private Spinner spinner(LinearLayout p, String label, String[] values) {
-        addLabel(p, label, 14); Spinner s = new Spinner(this); s.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, values)); p.addView(s); return s;
-    }
-    private EditText field(LinearLayout p, String hint, String value) {
-        EditText e = new EditText(this); e.setHint(hint); e.setText(value); e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
-        p.addView(e, new LinearLayout.LayoutParams(-1,-2)); return e;
-    }
+    private Spinner spinner(LinearLayout p, String label, String[] values) { addLabel(p, label, 14); Spinner s = new Spinner(this); s.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, values)); p.addView(s); return s; }
+    private EditText field(LinearLayout p, String hint, String value) { EditText e = new EditText(this); e.setHint(hint); e.setText(value); e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE); p.addView(e, new LinearLayout.LayoutParams(-1,-2)); return e; }
     private Button button(LinearLayout p, String text) { Button b = new Button(this); b.setText(text); p.addView(b,new LinearLayout.LayoutParams(-1,-2)); return b; }
     private CheckBox check(LinearLayout p, String text, boolean value) { CheckBox c = new CheckBox(this); c.setText(text); c.setChecked(value); p.addView(c); return c; }
     private void addLabel(LinearLayout p, String text, int size) { TextView v = new TextView(this); v.setText(text); v.setTextSize(size); v.setPadding(0,dp(8),0,dp(5)); p.addView(v); }
