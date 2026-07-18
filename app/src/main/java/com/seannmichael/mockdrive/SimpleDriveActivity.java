@@ -3,6 +3,7 @@ package com.seannmichael.mockdrive;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.text.Editable;
@@ -127,12 +128,43 @@ public class SimpleDriveActivity extends BaseActivity {
             double aLon=Double.parseDouble(startLon.getText().toString().trim());
             double bLat=Double.parseDouble(destinationLat.getText().toString().trim());
             double bLon=Double.parseDouble(destinationLon.getText().toString().trim());
-            JSONArray waypoints=new JSONArray().put(new JSONObject().put("latitude",aLat).put("longitude",aLon).put("stopSeconds",0)).put(new JSONObject().put("latitude",bLat).put("longitude",bLon).put("stopSeconds",0));
-            JSONObject trip=new JSONObject().put("name","Simple A to B drive").put("waypoints",waypoints).put("averageSpeedMph",selectedSpeed).put("speedVariationPercent",0).put("gpsUpdateIntervalMs",1000).put("randomStops",false).put("holdAtDestination",true).put("recurrence","none");
+
+            Intent hold=new Intent(this,MockLocationService.class)
+                    .setAction(MockLocationService.ACTION_TELEPORT)
+                    .putExtra(MockLocationService.EXTRA_LAT,aLat)
+                    .putExtra(MockLocationService.EXTRA_LON,aLon);
+            if(Build.VERSION.SDK_INT>=26)startForegroundService(hold);else startService(hold);
+            status.setText("Location A set. Preparing Google Maps…");
+
+            JSONArray waypoints=new JSONArray()
+                    .put(new JSONObject().put("latitude",aLat).put("longitude",aLon).put("stopSeconds",0))
+                    .put(new JSONObject().put("latitude",bLat).put("longitude",bLon).put("stopSeconds",0));
+            JSONObject trip=new JSONObject()
+                    .put("name","Simple A to B drive")
+                    .put("waypoints",waypoints)
+                    .put("averageSpeedMph",selectedSpeed)
+                    .put("speedVariationPercent",5)
+                    .put("gpsUpdateIntervalMs",1000)
+                    .put("speedProfile","fixed")
+                    .put("randomStops",false)
+                    .put("holdAtDestination",true)
+                    .put("recurrence","none");
             JSONObject saved=TripStore.save(this,trip);
-            TripScheduler.launch(this,saved);
-            status.setText("Starting route at "+selectedSpeed+" mph…");
-            new Handler().postDelayed(()->{try{String url="https://www.google.com/maps/dir/?api=1&origin="+aLat+","+aLon+"&destination="+Uri.encode(bLat+","+bLon)+"&travelmode=driving&dir_action=navigate";Intent maps=new Intent(Intent.ACTION_VIEW,Uri.parse(url));maps.setPackage("com.google.android.apps.maps");try{startActivity(maps);}catch(Exception e){maps.setPackage(null);startActivity(maps);}status.setText("Navigation active at "+selectedSpeed+" mph.");}catch(Exception e){status.setText("Could not open Google Maps: "+e.getMessage());}},1200);
+
+            new Handler().postDelayed(()->{
+                try{
+                    String destination=bLat+","+bLon;
+                    String url="https://www.google.com/maps/dir/?api=1&origin="+aLat+","+aLon+
+                            "&destination="+Uri.encode(destination)+"&travelmode=driving&dir_action=navigate";
+                    Intent maps=new Intent(Intent.ACTION_VIEW,Uri.parse(url));
+                    maps.setPackage("com.google.android.apps.maps");
+                    try{startActivity(maps);}catch(Exception e){maps.setPackage(null);startActivity(maps);}
+                    TripScheduler.launch(this,saved);
+                    status.setText("Navigation active. GPS is moving from A to B at "+selectedSpeed+" mph.");
+                }catch(Exception e){
+                    status.setText("Could not start navigation: "+e.getMessage());
+                }
+            },1500);
         }catch(Exception e){toast("Choose both locations or enter valid coordinates");}
     }
 
