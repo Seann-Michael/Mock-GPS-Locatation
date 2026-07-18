@@ -1,13 +1,16 @@
 package com.seannmichael.mockdrive;
 
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.os.Build;
 import android.view.Gravity;
+import android.view.View;
+import android.view.WindowInsets;
 import android.view.inputmethod.InputMethodManager;
-import android.content.Context;
 import android.widget.AutoCompleteTextView;
 import android.widget.Button;
 import android.widget.EditText;
@@ -32,19 +35,43 @@ public final class UiKit {
         p.setOrientation(LinearLayout.VERTICAL);
         p.setPadding(dp(a,16),dp(a,10),dp(a,16),dp(a,24));
         p.setBackgroundColor(PAGE);
+        p.setFocusable(true);
+        p.setFocusableInTouchMode(true);
         return p;
     }
 
     public static void setStickyScreen(Activity a, LinearLayout content, String current){
+        a.getWindow().setNavigationBarColor(Color.WHITE);
+        if(Build.VERSION.SDK_INT>=23)a.getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+
         LinearLayout shell=new LinearLayout(a);
         shell.setOrientation(LinearLayout.VERTICAL);
         shell.setBackgroundColor(PAGE);
+        shell.setFocusable(true);
+        shell.setFocusableInTouchMode(true);
+
         ScrollView scroll=new ScrollView(a);
         scroll.setFillViewport(true);
+        scroll.setClipToPadding(false);
         scroll.addView(content);
         shell.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         shell.addView(bottomNavView(a,current),new LinearLayout.LayoutParams(-1,dp(a,84)));
+
+        shell.setOnApplyWindowInsetsListener((view,insets)->{
+            int left=0,right=0,bottom=0;
+            if(Build.VERSION.SDK_INT>=30){
+                android.graphics.Insets nav=insets.getInsets(WindowInsets.Type.navigationBars());
+                left=nav.left;right=nav.right;bottom=nav.bottom;
+            }else{
+                left=insets.getSystemWindowInsetLeft();
+                right=insets.getSystemWindowInsetRight();
+                bottom=insets.getSystemWindowInsetBottom();
+            }
+            view.setPadding(left,0,right,bottom);
+            return insets;
+        });
         a.setContentView(shell);
+        shell.requestApplyInsets();
     }
 
     public static void topBar(Activity a,LinearLayout p,String title,boolean back){
@@ -95,10 +122,17 @@ public final class UiKit {
 
     private static void styleInput(Activity a,EditText e,String hint,String value){
         e.setHint(hint);e.setText(value);e.setTextSize(16);e.setTextColor(INK);e.setHintTextColor(Color.rgb(120,139,166));e.setPadding(dp(a,15),dp(a,13),dp(a,15),dp(a,13));
-        e.setSingleLine(true);e.setFocusable(true);e.setFocusableInTouchMode(true);e.setShowSoftInputOnFocus(true);
+        e.setSingleLine(true);e.setFocusable(true);e.setFocusableInTouchMode(true);e.setClickable(true);e.setLongClickable(true);e.setTextIsSelectable(false);e.setShowSoftInputOnFocus(true);
         e.setBackground(rounded(Color.WHITE,Color.rgb(185,205,234),dp(a,16),dp(a,1)));
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.setMargins(0,dp(a,7),0,dp(a,9));e.setLayoutParams(lp);
-        e.setOnClickListener(v->{e.requestFocus();e.postDelayed(()->{InputMethodManager imm=(InputMethodManager)a.getSystemService(Context.INPUT_METHOD_SERVICE);if(imm!=null)imm.showSoftInput(e,InputMethodManager.SHOW_IMPLICIT);},80);});
+        e.setOnFocusChangeListener((v,hasFocus)->{
+            if(hasFocus){
+                e.postDelayed(()->{
+                    InputMethodManager keyboard=(InputMethodManager)a.getSystemService(Context.INPUT_METHOD_SERVICE);
+                    if(keyboard!=null)keyboard.showSoftInput(e,InputMethodManager.SHOW_IMPLICIT);
+                },120);
+            }
+        });
     }
 
     private static GradientDrawable rounded(int fill,int stroke,int radius,int width){GradientDrawable g=new GradientDrawable();g.setColor(fill);g.setCornerRadius(radius);g.setStroke(width,stroke);return g;}
