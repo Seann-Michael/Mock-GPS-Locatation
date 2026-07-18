@@ -10,15 +10,17 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import androidx.core.content.FileProvider;
-
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.OutputStream;
 
 public class DiagnosticsActivity extends BaseActivity {
+    private static final int REQUEST_SAVE_ZIP=4102;
     private final Handler handler=new Handler();
     private TextView stateView,logView;
+    private File pendingZip;
     private final Runnable refreshTask=new Runnable(){@Override public void run(){refresh();handler.postDelayed(this,1000);}};
 
     @Override protected void onCreate(Bundle state){
@@ -27,7 +29,7 @@ public class DiagnosticsActivity extends BaseActivity {
 
         LinearLayout hero=UiKit.hero(this,root);
         hero.addView(UiKit.whiteText(this,"Navigation diagnostics",27,true));
-        hero.addView(UiKit.whiteText(this,"Run a trip until it stops, then export the ZIP and share it for analysis.",15,false));
+        hero.addView(UiKit.whiteText(this,"Run a trip until it stops, then save the ZIP and upload it for analysis.",15,false));
 
         LinearLayout live=UiKit.card(this,root);
         live.addView(UiKit.text(this,"Live service state",20,true));
@@ -41,9 +43,9 @@ public class DiagnosticsActivity extends BaseActivity {
         logView=UiKit.text(this,"No navigation log yet.",12,false);logView.setTextIsSelectable(true);logs.addView(logView);
 
         LinearLayout export=UiKit.card(this,root);
-        export.addView(UiKit.text(this,"Export and share",20,true));
+        export.addView(UiKit.text(this,"Export diagnostics",20,true));
         export.addView(UiKit.text(this,"Creates a ZIP containing navigation.log, exceptions.log, trip.json, route.json, phone_info.json, and live_state.json.",13,false));
-        Button share=UiKit.button(this,"Export diagnostics ZIP");export.addView(share);share.setOnClickListener(v->shareDiagnostics());
+        Button save=UiKit.button(this,"Save diagnostics ZIP");export.addView(save);save.setOnClickListener(v->saveDiagnostics());
 
         ScrollView scroll=new ScrollView(this);scroll.addView(root);setContentView(scroll);
     }
@@ -73,13 +75,28 @@ public class DiagnosticsActivity extends BaseActivity {
         logView.setText(tail.isEmpty()?"No navigation log yet.":tail);
     }
 
-    private void shareDiagnostics(){
+    private void saveDiagnostics(){
         try{
-            File zip=DiagnosticLogger.exportZip(this);
-            Uri uri=FileProvider.getUriForFile(this,getPackageName()+".files",zip);
-            Intent share=new Intent(Intent.ACTION_SEND);
-            share.setType("application/zip");share.putExtra(Intent.EXTRA_STREAM,uri);share.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            startActivity(Intent.createChooser(share,"Share Mock Drive diagnostics"));
-        }catch(Exception e){Toast.makeText(this,"Could not export diagnostics: "+e.getMessage(),Toast.LENGTH_LONG).show();}
+            pendingZip=DiagnosticLogger.exportZip(this);
+            Intent save=new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            save.addCategory(Intent.CATEGORY_OPENABLE);
+            save.setType("application/zip");
+            save.putExtra(Intent.EXTRA_TITLE,"MockDrive-diagnostics.zip");
+            startActivityForResult(save,REQUEST_SAVE_ZIP);
+        }catch(Exception e){Toast.makeText(this,"Could not prepare diagnostics: "+e.getMessage(),Toast.LENGTH_LONG).show();}
+    }
+
+    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
+        super.onActivityResult(requestCode,resultCode,data);
+        if(requestCode!=REQUEST_SAVE_ZIP||resultCode!=RESULT_OK||data==null||data.getData()==null||pendingZip==null)return;
+        Uri destination=data.getData();
+        try(FileInputStream in=new FileInputStream(pendingZip);OutputStream out=getContentResolver().openOutputStream(destination)){
+            if(out==null)throw new Exception("Android could not open the selected destination");
+            byte[] buffer=new byte[8192];int read;
+            while((read=in.read(buffer))!=-1)out.write(buffer,0,read);
+            out.flush();
+            Toast.makeText(this,"Diagnostics ZIP saved. Upload that file here.",Toast.LENGTH_LONG).show();
+        }catch(Exception e){Toast.makeText(this,"Could not save diagnostics: "+e.getMessage(),Toast.LENGTH_LONG).show();}
+        finally{pendingZip=null;}
     }
 }
