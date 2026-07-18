@@ -12,11 +12,16 @@ import android.location.Location;
 import android.location.LocationManager;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.SystemClock;
 
 import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationAvailability;
+import com.google.android.gms.location.LocationCallback;
+import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.Priority;
 import com.google.android.gms.tasks.Tasks;
 
 import org.json.JSONArray;
@@ -60,6 +65,12 @@ public class MockLocationService extends Service {
     private volatile long fusedAvailabilityCheckedElapsedMs = -1;
     private volatile String fusedAvailabilityError = "";
     private volatile boolean fusedAvailabilityRequestInFlight;
+    private LocationCallback fusedKeepaliveCallback;
+    private volatile boolean fusedKeepaliveRegistered;
+    private volatile long fusedKeepaliveCallbackCount;
+    private volatile long fusedKeepaliveLastCallbackElapsedMs = -1;
+    private volatile Location fusedKeepaliveLastLocation;
+    private volatile String fusedKeepaliveError = "";
 
     @Override public void onCreate() {
         super.onCreate();
@@ -393,6 +404,7 @@ public class MockLocationService extends Service {
         } else {
             log("PROVIDER", "Reusing existing Fused mock session between hold and drive");
         }
+        ensureFusedKeepalive();
         refreshFusedAvailability();
     }
 
@@ -431,6 +443,11 @@ public class MockLocationService extends Service {
         try { fusedReported = Tasks.await(fusedClient.getLastLocation(), 3, TimeUnit.SECONDS); }
         catch (Throwable e) { error("Fused readback", e); }
 
+        Location callbackLocation = fusedKeepaliveLastLocation == null ? null : new Location(fusedKeepaliveLastLocation);
+        long callbackAgeMs = fusedKeepaliveLastCallbackElapsedMs < 0 ? -1 :
+                Math.max(0, SystemClock.elapsedRealtime() - fusedKeepaliveLastCallbackElapsedMs);
+        float callbackDeltaMeters = callbackLocation == null ? -1 : fusedInjected.distanceTo(callbackLocation);
+
         boolean gpsEnabled = false;
         try { gpsEnabled = manager.isProviderEnabled(LocationManager.GPS_PROVIDER); }
         catch (Exception ignored) {}
@@ -451,6 +468,12 @@ public class MockLocationService extends Service {
                     .put("fusedLocationAvailable", fusedLocationAvailable != null && fusedLocationAvailable)
                     .put("fusedAvailabilityAgeMs", fusedAvailabilityCheckedElapsedMs < 0 ? -1 : Math.max(0, SystemClock.elapsedRealtime() - fusedAvailabilityCheckedElapsedMs))
                     .put("fusedAvailabilityError", fusedAvailabilityError)
+                    .put("fusedKeepaliveRegistered", fusedKeepaliveRegistered)
+                    .put("fusedKeepaliveCallbackCount", fusedKeepaliveCallbackCount)
+                    .put("fusedKeepaliveLastCallbackAgeMs", callbackAgeMs)
+                    .put("fusedKeepaliveLastCallbackProvider", callbackLocation == null ? "" : callbackLocation.getProvider())
+                    .put("fusedKeepaliveLastCallbackDistanceMeters", callbackDeltaMeters)
+                    .put("fusedKeepaliveError", fusedKeepaliveError)
                     .put("gpsInjectedComplete", locationComplete(gpsInjected))
                     .put("fusedInjectedComplete", locationComplete(fusedInjected))
                     .put("gpsInjectedWallClockAgeMs", Math.max(0, System.currentTimeMillis() - gpsInjected.getTime()))
@@ -474,12 +497,18 @@ public class MockLocationService extends Service {
             log("HEARTBEAT", "injection=" + injectionCount + " segment=" + currentSegment + "/" + totalSegments +
                     " gpsSuccess=" + gpsSuccess + " fusedSuccess=" + fusedSuccess +
                     " fusedAvailable=" + (fusedLocationAvailable == null ? "unknown" : fusedLocationAvailable) +
+                    " callbackRegistered=" + fusedKeepaliveRegistered +
+                    " callbackCount=" + fusedKeepaliveCallbackCount +
+                    " callbackAgeMs=" + callbackAgeMs +
                     " gpsDeltaMeters=" + gpsDelta + " fusedDeltaMeters=" + fusedDelta +
                     " workMs=" + (SystemClock.elapsedRealtime() - started));
         }
         if (!fusedSuccess) warning("Fused location injection failed at update " + injectionCount + ": " + fusedError);
         if (fusedReported == null) warning("Fused provider returned no location at update " + injectionCount);
         else if (fusedDelta > 5) warning("Fused provider differs from requested location by " + fusedDelta + " meters at update " + injectionCount);
+        if (fusedKeepaliveRegistered && injectionCount > 5 && callbackAgeMs > 3000) {
+            warning("Fused subscription callback is stale by " + callbackAgeMs + " ms at update " + injectionCount);
+        }
     }
 
     private void refreshFusedAvailability() {
@@ -504,6 +533,63 @@ public class MockLocationService extends Service {
             fusedAvailabilityCheckedElapsedMs = SystemClock.elapsedRealtime();
             fusedLocationAvailable = null;
             fusedAvailabilityError = error.getClass().getSimpleName() + ": " + safe(error.getMessage());
+        }
+    }
+
+    private void ensureFusedKeepalive() {
+        if (fusedKeepaliveRegistered) return;
+        if (fusedKeepaliveCallback == null) {
+            fusedKeepaliveCallback = new LocationCallback() {
+                @Override public void onLocationResult(LocationResult result) {
+                    Location location = result == null ? null : result.getLastLocation();
+                    if (location == null) return;
+                    fusedKeepaliveLastLocation = new Location(location);
+                    fusedKeepaliveLastCallbackElapsedMs = SystemClock.elapsedRealtime();
+                    fusedKeepaliveCallbackCount++;
+                }
+
+                @Override public void onLocationAvailability(LocationAvailability availability) {
+                    fusedLocationAvailable = availability != null && availability.isLocationAvailable();
+                    fusedAvailabilityCheckedElapsedMs = SystemClock.elapsedRealtime();
+                    fusedAvailabilityError = "";
+                }
+            };
+        }
+        try {
+            LocationRequest request = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 500L).build();
+            fusedClient.requestLocationUpdates(request, fusedKeepaliveCallback, Looper.getMainLooper())
+                    .addOnCompleteListener(task -> {
+                        if (task.isSuccessful()) {
+                            fusedKeepaliveRegistered = true;
+                            fusedKeepaliveError = "";
+                            log("PROVIDER", "High-accuracy Fused subscription keepalive registered");
+                        } else {
+                            Throwable error = task.getException();
+                            fusedKeepaliveRegistered = false;
+                            fusedKeepaliveError = error == null ? "Registration failed" :
+                                    error.getClass().getSimpleName() + ": " + safe(error.getMessage());
+                            warning("Fused subscription keepalive registration failed: " + fusedKeepaliveError);
+                        }
+                    });
+        } catch (Throwable error) {
+            fusedKeepaliveRegistered = false;
+            fusedKeepaliveError = error.getClass().getSimpleName() + ": " + safe(error.getMessage());
+            warning("Fused subscription keepalive setup failed: " + fusedKeepaliveError);
+        }
+    }
+
+    private void stopFusedKeepalive() {
+        LocationCallback callback = fusedKeepaliveCallback;
+        fusedKeepaliveRegistered = false;
+        if (callback != null) {
+            try {
+                fusedClient.removeLocationUpdates(callback).addOnCompleteListener(task ->
+                        log("PROVIDER", task.isSuccessful() ?
+                                "Fused subscription keepalive removed" :
+                                "Fused subscription keepalive removal failed"));
+            } catch (Throwable error) {
+                log("PROVIDER", "Fused subscription keepalive removal error: " + error.getClass().getSimpleName());
+            }
         }
     }
 
@@ -577,6 +663,7 @@ public class MockLocationService extends Service {
         boolean wasCompleted = completed;
         stopWorker();
         phase = "stopped";
+        stopFusedKeepalive();
         try { manager.removeTestProvider(LocationManager.GPS_PROVIDER); }
         catch (Exception e) { log("PROVIDER", "GPS provider removal on stop: " + e.getClass().getSimpleName()); }
         gpsProviderReady = false;
@@ -584,6 +671,10 @@ public class MockLocationService extends Service {
         fusedLocationAvailable = null;
         fusedAvailabilityCheckedElapsedMs = -1;
         fusedAvailabilityError = "";
+        fusedKeepaliveCallbackCount = 0;
+        fusedKeepaliveLastCallbackElapsedMs = -1;
+        fusedKeepaliveLastLocation = null;
+        fusedKeepaliveError = "";
         try {
             fusedClient.setMockMode(false).addOnCompleteListener(task -> {
                 if (task.isSuccessful()) log("PROVIDER", "Fused mock mode disabled");
