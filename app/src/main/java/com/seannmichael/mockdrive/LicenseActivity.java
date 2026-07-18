@@ -1,27 +1,42 @@
 package com.seannmichael.mockdrive;
 
-import android.app.Activity;
 import android.os.Bundle;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
-import android.widget.TextView;
 import android.widget.Toast;
 
-public class LicenseActivity extends Activity {
+public class LicenseActivity extends BaseActivity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);int p=dp(16);root.setPadding(p,p,p,p);
-        text(root,"License",28);
-        text(root,"License validation will be connected to the future licensing server. This page currently stores the entered key on this device but does not treat it as verified.",14);
-        EditText key=new EditText(this);key.setHint("License key");key.setText(AppPreferences.licenseKey(this));root.addView(key,new LinearLayout.LayoutParams(-1,-2));
-        Button save=button(root,"Save License Key");save.setOnClickListener(v->{AppPreferences.saveLicenseKey(this,key.getText().toString().trim());Toast.makeText(this,"License key saved as unverified",Toast.LENGTH_LONG).show();});
-        Button clear=button(root,"Remove License Key");clear.setOnClickListener(v->{AppPreferences.clearLicenseKey(this);key.setText("");Toast.makeText(this,"License key removed",Toast.LENGTH_LONG).show();});
-        text(root,"Status: Not connected to licensing server",16);
-        text(root,"Planned: activation, expiration, device limits, transfer, revocation, and offline grace period.",14);
-        setContentView(root);
+        LinearLayout root = UiKit.page(this);
+        UiKit.topBar(this, root, "License", true);
+
+        LinearLayout status = UiKit.card(this, root);
+        status.addView(UiKit.text(this, "License status", 19, true));
+        UiKit.statusRow(this, status, "Server connection", "Not connected", UiKit.WARN, UiKit.WARN_BG);
+        boolean stored = !AppPreferences.licenseKey(this).isEmpty();
+        UiKit.statusRow(this, status, "Stored key", stored ? "Saved (unverified)" : "None",
+                stored ? UiKit.OK : UiKit.MUTED, stored ? UiKit.OK_BG : UiKit.BLUE_LIGHT);
+
+        LinearLayout keyCard = UiKit.card(this, root);
+        keyCard.addView(UiKit.text(this, "License key", 19, true));
+        keyCard.addView(UiKit.text(this, "The key is stored on this device but is not treated as verified until a licensing server is connected.", 13, false));
+        EditText key = UiKit.field(this, "License key", AppPreferences.licenseKey(this));
+        keyCard.addView(key);
+        Button save = UiKit.button(this, "Save license key");
+        keyCard.addView(save);
+        save.setOnClickListener(v -> { AppPreferences.saveLicenseKey(this, key.getText().toString().trim()); toast("License key saved as unverified"); recreate(); });
+        Button clear = UiKit.secondaryButton(this, "Remove license key");
+        keyCard.addView(clear);
+        clear.setOnClickListener(v -> { AppPreferences.clearLicenseKey(this); key.setText(""); toast("License key removed"); recreate(); });
+
+        LinearLayout planned = UiKit.card(this, root);
+        planned.addView(UiKit.text(this, "Planned", 19, true));
+        planned.addView(UiKit.text(this, "Activation, expiration, device limits, transfer, revocation, and an offline grace period.", 14, false));
+
+        UiKit.setStickyScreen(this, root, "Settings");
     }
-    private TextView text(LinearLayout p,String s,int z){TextView v=new TextView(this);v.setText(s);v.setTextSize(z);v.setPadding(0,dp(8),0,dp(5));p.addView(v);return v;}
-    private Button button(LinearLayout p,String s){Button b=new Button(this);b.setText(s);p.addView(b,new LinearLayout.LayoutParams(-1,-2));return b;}
-    private int dp(int v){return Math.round(v*getResources().getDisplayMetrics().density);}
+
+    private void toast(String s) { Toast.makeText(this, s, Toast.LENGTH_SHORT).show(); }
 }

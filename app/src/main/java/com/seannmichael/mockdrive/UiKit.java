@@ -3,9 +3,12 @@ package com.seannmichael.mockdrive;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.os.Build;
 import android.view.Gravity;
 import android.view.View;
@@ -27,6 +30,12 @@ public final class UiKit {
     public static final int PAGE = Color.rgb(245, 249, 255);
     public static final int INK = Color.rgb(18, 40, 73);
     public static final int MUTED = Color.rgb(91, 111, 139);
+    public static final int BORDER = Color.rgb(214, 226, 244);
+
+    // Semantic status colors (foreground / soft background pairs) used by pills and status rows.
+    public static final int OK = Color.rgb(21, 128, 82), OK_BG = Color.rgb(224, 244, 233);
+    public static final int WARN = Color.rgb(173, 118, 12), WARN_BG = Color.rgb(252, 244, 221);
+    public static final int BAD = Color.rgb(191, 54, 54), BAD_BG = Color.rgb(252, 231, 231);
 
     public static int dp(Activity a,int v){return Math.round(v*a.getResources().getDisplayMetrics().density);}
 
@@ -100,17 +109,46 @@ public final class UiKit {
 
     public static Button button(Activity a,String s){
         Button b=new Button(a);b.setText(s);b.setAllCaps(false);b.setTextSize(16);b.setTextColor(Color.WHITE);b.setTypeface(Typeface.create("sans-serif",Typeface.BOLD));b.setMinHeight(dp(a,56));
-        GradientDrawable g=new GradientDrawable();g.setColor(BLUE);g.setCornerRadius(dp(a,18));b.setBackground(g);b.setElevation(dp(a,2));
+        GradientDrawable g=new GradientDrawable();g.setColor(BLUE);g.setCornerRadius(dp(a,18));b.setBackground(pressable(Color.argb(70,255,255,255),g));b.setElevation(dp(a,2));
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(a,56));lp.setMargins(0,dp(a,7),0,dp(a,7));b.setLayoutParams(lp);return b;
     }
 
     public static Button secondaryButton(Activity a,String s){
         Button b=new Button(a);b.setText(s);b.setAllCaps(false);b.setTextSize(15);b.setTextColor(BLUE_DARK);b.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));b.setMinHeight(dp(a,52));
-        GradientDrawable g=new GradientDrawable();g.setColor(BLUE_LIGHT);g.setCornerRadius(dp(a,17));g.setStroke(dp(a,1),Color.rgb(179,205,246));b.setBackground(g);
+        GradientDrawable g=new GradientDrawable();g.setColor(BLUE_LIGHT);g.setCornerRadius(dp(a,17));g.setStroke(dp(a,1),Color.rgb(179,205,246));b.setBackground(pressable(Color.argb(45,20,91,218),g));
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(a,52));lp.setMargins(0,dp(a,6),0,dp(a,6));b.setLayoutParams(lp);return b;
     }
 
     private static Button ghostButton(Activity a,String s){Button b=new Button(a);b.setText(s);b.setAllCaps(false);b.setTextColor(BLUE);b.setBackgroundColor(Color.TRANSPARENT);return b;}
+
+    /** Wraps a shaped background with a touch ripple so buttons give tactile press feedback. */
+    private static Drawable pressable(int rippleColor,GradientDrawable content){
+        return new RippleDrawable(ColorStateList.valueOf(rippleColor),content,content);
+    }
+
+    /** Small rounded status badge, e.g. "Active" / "Missing". Pass a foreground and soft background color. */
+    public static TextView pill(Activity a,String text,int fg,int bg){
+        TextView v=new TextView(a);v.setText(text);v.setTextSize(12);v.setTextColor(fg);v.setTypeface(Typeface.create("sans-serif-medium",Typeface.BOLD));
+        v.setPadding(dp(a,11),dp(a,4),dp(a,11),dp(a,5));v.setGravity(Gravity.CENTER);
+        GradientDrawable g=new GradientDrawable();g.setColor(bg);g.setCornerRadius(dp(a,20));v.setBackground(g);
+        return v;
+    }
+
+    /** A thin divider line for separating rows inside a card. */
+    public static void divider(Activity a,LinearLayout parent){
+        View v=new View(a);v.setBackgroundColor(BORDER);
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,Math.max(1,dp(a,1)));lp.setMargins(0,dp(a,10),0,dp(a,10));parent.addView(v,lp);
+    }
+
+    /** A label on the left with a status pill on the right, wrapped in one row. */
+    public static void statusRow(Activity a,LinearLayout parent,String label,String value,int fg,int bg){
+        LinearLayout row=new LinearLayout(a);row.setOrientation(LinearLayout.HORIZONTAL);row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0,dp(a,6),0,dp(a,6));
+        TextView l=text(a,label,15,false);l.setTextColor(MUTED);l.setPadding(0,0,dp(a,10),0);
+        row.addView(l,new LinearLayout.LayoutParams(0,-2,1));
+        TextView p=pill(a,value,fg,bg);row.addView(p,new LinearLayout.LayoutParams(-2,-2));
+        parent.addView(row,new LinearLayout.LayoutParams(-1,-2));
+    }
 
     public static EditText field(Activity a,String hint,String value){
         EditText e=new EditText(a);styleInput(a,e,hint,value);return e;

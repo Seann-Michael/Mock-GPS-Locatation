@@ -6,14 +6,14 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.widget.Button;
 import android.widget.LinearLayout;
-import android.widget.TextView;
 
 import java.util.ArrayList;
 
 public class StandbyActivity extends Activity {
-    private TextView deviceStatus;
+    private LinearLayout setupCard;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -24,8 +24,10 @@ public class StandbyActivity extends Activity {
         LinearLayout hero = UiKit.hero(this, root);
         hero.addView(UiKit.whiteText(this, "Drive from A to B", 28, true));
         hero.addView(UiKit.whiteText(this, "Set a mock starting point, launch Google Maps, and simulate movement along real roads.", 15, false));
-        deviceStatus = UiKit.whiteText(this, "Checking device setup…", 14, true);
-        hero.addView(deviceStatus);
+
+        // Setup readiness — at-a-glance status with an action shortcut.
+        setupCard = UiKit.card(this, root);
+        refresh();
 
         LinearLayout primary = UiKit.card(this, root);
         primary.addView(UiKit.text(this, "Start a drive", 21, true));
@@ -47,10 +49,10 @@ public class StandbyActivity extends Activity {
         controls.addView(stop);
         stop.setOnClickListener(v -> startService(new Intent(this, MockLocationService.class).setAction(MockLocationService.ACTION_STOP)));
 
-        UiKit.setStickyScreen(this,root,"Home");
+        UiKit.setStickyScreen(this, root, "Home");
     }
 
-    @Override protected void onResume() {super.onResume();refresh();}
+    @Override protected void onResume() { super.onResume(); refresh(); }
 
     private void requestPermissionsIfNeeded() {
         if (Build.VERSION.SDK_INT < 23) return;
@@ -62,7 +64,18 @@ public class StandbyActivity extends Activity {
     }
 
     private void refresh() {
+        if (setupCard == null) return;
+        setupCard.removeAllViews();
+        setupCard.addView(UiKit.text(this, "Device setup", 20, true));
         boolean locationGranted = Build.VERSION.SDK_INT < 23 || checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
-        deviceStatus.setText((locationGranted ? "✓ Location permission granted" : "! Location permission required") + "\nSelect Mock Drive in Developer Options");
+        UiKit.statusRow(this, setupCard, "Location permission", locationGranted ? "Granted" : "Required",
+                locationGranted ? UiKit.OK : UiKit.BAD, locationGranted ? UiKit.OK_BG : UiKit.BAD_BG);
+        UiKit.statusRow(this, setupCard, "Mock location app", "Select in Dev Options", UiKit.WARN, UiKit.WARN_BG);
+        Button dev = UiKit.secondaryButton(this, "Open Developer Options");
+        setupCard.addView(dev);
+        dev.setOnClickListener(v -> {
+            try { startActivity(new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)); }
+            catch (Exception e) { startActivity(new Intent(Settings.ACTION_SETTINGS)); }
+        });
     }
 }

@@ -1,33 +1,65 @@
 package com.seannmichael.mockdrive;
 
-import android.app.Activity;
 import android.content.Context;
 import android.location.LocationManager;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.widget.LinearLayout;
-import android.widget.TextView;
 
-public class DiagnosticsActivity extends Activity {
+public class DiagnosticsActivity extends BaseActivity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);int p=dp(16);root.setPadding(p,p,p,p);
-        text(root,"Diagnostics",28);
-        text(root,"Package: "+getPackageName(),14);
-        text(root,"Android version: "+android.os.Build.VERSION.RELEASE+" (API "+android.os.Build.VERSION.SDK_INT+")",14);
-        String mock="Unknown";
-        try { mock=Settings.Secure.getString(getContentResolver(),"mock_location"); } catch(Exception ignored) {}
-        text(root,"Developer mock-location setting: "+mock,14);
-        LocationManager lm=(LocationManager)getSystemService(Context.LOCATION_SERVICE);
-        text(root,"GPS provider enabled: "+lm.isProviderEnabled(LocationManager.GPS_PROVIDER),14);
-        String api=AppPreferences.apiKey(this);
-        text(root,"API key: "+(api!=null&&!api.startsWith("revoked-")?"Active":"Revoked / missing"),14);
-        text(root,"Google Places key: "+(!GooglePlacesEngine.getApiKey(this).isEmpty()?"Configured":"Missing"),14);
-        text(root,"License key: "+(!AppPreferences.licenseKey(this).isEmpty()?"Stored but unverified":"Missing"),14);
-        text(root,"Queued trips: "+TripStore.all(this).length(),14);
-        text(root,"Remote control API: "+(AppPreferences.apiEnabled(this)?"Running":"Stopped")+" (port "+ApiService.PORT+")\nRestart after reboot: "+(AppPreferences.apiAutoStart(this)?"On":"Off")+"\nUse a private VPN such as Tailscale for remote access.",14);
-        setContentView(root);
+        LinearLayout root = UiKit.page(this);
+        UiKit.topBar(this, root, "Diagnostics", true);
+
+        LinearLayout hero = UiKit.hero(this, root);
+        hero.addView(UiKit.whiteText(this, "Device diagnostics", 24, true));
+        hero.addView(UiKit.whiteText(this, "A quick health check of permissions, GPS and saved data.", 14, false));
+
+        // Location / mock setup
+        LinearLayout gps = UiKit.card(this, root);
+        gps.addView(UiKit.text(this, "Location & mock setup", 19, true));
+        LocationManager lm = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+        boolean gpsOn = lm != null && lm.isProviderEnabled(LocationManager.GPS_PROVIDER);
+        UiKit.statusRow(this, gps, "GPS provider", gpsOn ? "Enabled" : "Disabled",
+                gpsOn ? UiKit.OK : UiKit.BAD, gpsOn ? UiKit.OK_BG : UiKit.BAD_BG);
+        String mock = "Unknown";
+        try { mock = Settings.Secure.getString(getContentResolver(), "mock_location"); } catch (Exception ignored) {}
+        boolean mockOn = "1".equals(mock);
+        UiKit.statusRow(this, gps, "Developer mock-location", mockOn ? "On" : (mock == null ? "Unknown" : "Off"),
+                mockOn ? UiKit.OK : UiKit.WARN, mockOn ? UiKit.OK_BG : UiKit.WARN_BG);
+
+        // Keys & credentials
+        LinearLayout keys = UiKit.card(this, root);
+        keys.addView(UiKit.text(this, "Keys & credentials", 19, true));
+        String api = AppPreferences.apiKey(this);
+        boolean apiActive = api != null && !api.startsWith("revoked-");
+        UiKit.statusRow(this, keys, "Remote API key", apiActive ? "Active" : "Revoked",
+                apiActive ? UiKit.OK : UiKit.WARN, apiActive ? UiKit.OK_BG : UiKit.WARN_BG);
+        boolean placesSet = !GooglePlacesEngine.getApiKey(this).isEmpty();
+        UiKit.statusRow(this, keys, "Google Places key", placesSet ? "Configured" : "Missing",
+                placesSet ? UiKit.OK : UiKit.WARN, placesSet ? UiKit.OK_BG : UiKit.WARN_BG);
+        boolean licenseSet = !AppPreferences.licenseKey(this).isEmpty();
+        UiKit.statusRow(this, keys, "License key", licenseSet ? "Stored" : "Missing",
+                licenseSet ? UiKit.OK : UiKit.WARN, licenseSet ? UiKit.OK_BG : UiKit.WARN_BG);
+
+        // Remote control API
+        LinearLayout service = UiKit.card(this, root);
+        service.addView(UiKit.text(this, "Remote control API", 19, true));
+        boolean apiRunning = AppPreferences.apiEnabled(this);
+        UiKit.statusRow(this, service, "Service", apiRunning ? "Running" : "Stopped",
+                apiRunning ? UiKit.OK : UiKit.MUTED, apiRunning ? UiKit.OK_BG : UiKit.BLUE_LIGHT);
+        UiKit.statusRow(this, service, "Restart after reboot", AppPreferences.apiAutoStart(this) ? "On" : "Off",
+                UiKit.MUTED, UiKit.BLUE_LIGHT);
+        service.addView(UiKit.text(this, "Listening on port " + ApiService.PORT + ". Use a private VPN such as Tailscale for remote access.", 13, false));
+
+        // Environment
+        LinearLayout env = UiKit.card(this, root);
+        env.addView(UiKit.text(this, "Environment", 19, true));
+        env.addView(UiKit.text(this, "Package: " + getPackageName(), 14, false));
+        env.addView(UiKit.text(this, "Android: " + android.os.Build.VERSION.RELEASE + " (API " + android.os.Build.VERSION.SDK_INT + ")", 14, false));
+        env.addView(UiKit.text(this, "Queued trips: " + TripStore.all(this).length(), 14, false));
+
+        UiKit.setStickyScreen(this, root, "Settings");
     }
-    private TextView text(LinearLayout p,String s,int z){TextView v=new TextView(this);v.setText(s);v.setTextSize(z);v.setPadding(0,dp(8),0,dp(5));p.addView(v);return v;}
-    private int dp(int v){return Math.round(v*getResources().getDisplayMetrics().density);}
 }

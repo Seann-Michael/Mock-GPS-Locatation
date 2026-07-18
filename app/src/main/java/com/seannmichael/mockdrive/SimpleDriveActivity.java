@@ -25,7 +25,7 @@ import java.util.ArrayList;
 public class SimpleDriveActivity extends BaseActivity {
     private AutoCompleteTextView startAddress,destinationAddress;
     private EditText startLat,startLon,destinationLat,destinationLon;
-    private TextView status,speedValue;
+    private TextView status,speedValue,statePill;
     private int selectedSpeed=35;
     private final Handler searchHandler=new Handler();
 
@@ -84,6 +84,10 @@ public class SimpleDriveActivity extends BaseActivity {
         });
 
         LinearLayout actionCard=UiKit.card(this,root);
+        LinearLayout pillRow=new LinearLayout(this);pillRow.setOrientation(LinearLayout.HORIZONTAL);pillRow.setPadding(0,0,0,UiKit.dp(this,4));
+        statePill=UiKit.pill(this,"Ready",UiKit.MUTED,UiKit.BLUE_LIGHT);
+        pillRow.addView(statePill,new LinearLayout.LayoutParams(-2,-2));
+        actionCard.addView(pillRow);
         Button start=UiKit.button(this,"Start Google Maps navigation");
         actionCard.addView(start);
         Button stop=UiKit.secondaryButton(this,"Stop and restore real GPS");
@@ -93,6 +97,7 @@ public class SimpleDriveActivity extends BaseActivity {
         stop.setOnClickListener(v->{
             startService(new Intent(this,MockLocationService.class).setAction(MockLocationService.ACTION_STOP));
             status.setText("Simulation stopped. Real GPS restored.");
+            setState("Stopped",UiKit.MUTED,UiKit.BLUE_LIGHT);
         });
 
         UiKit.setStickyScreen(this,root,"Drive");
@@ -197,6 +202,7 @@ public class SimpleDriveActivity extends BaseActivity {
 
             TripScheduler.launch(this,saved);
             status.setText("Starting route at "+selectedSpeed+" mph…");
+            setState("Navigating",UiKit.OK,UiKit.OK_BG);
 
             new Handler().postDelayed(()->{
                 try{
@@ -213,6 +219,15 @@ public class SimpleDriveActivity extends BaseActivity {
         }catch(Exception e){
             toast("Choose both locations or enter valid coordinates");
         }
+    }
+
+    private void setState(String label,int fg,int bg){
+        if(statePill==null)return;
+        statePill.setText(label);
+        statePill.setTextColor(fg);
+        android.graphics.drawable.GradientDrawable g=new android.graphics.drawable.GradientDrawable();
+        g.setColor(bg);g.setCornerRadius(UiKit.dp(this,20));
+        statePill.setBackground(g);
     }
 
     private void toast(String message){Toast.makeText(this,message,Toast.LENGTH_LONG).show();}

@@ -1,28 +1,33 @@
 package com.seannmichael.mockdrive;
 
-import android.app.Activity;
 import android.os.Bundle;
 import android.widget.Button;
 import android.widget.LinearLayout;
-import android.widget.TextView;
 import android.widget.Toast;
 
-public class BillingActivity extends Activity {
+public class BillingActivity extends BaseActivity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);int p=dp(16);root.setPadding(p,p,p,p);
-        text(root,"Billing",28);
-        text(root,"Plan: Development / not connected",17);
-        text(root,"Billing is intentionally inactive until a payment provider and backend are connected.",14);
-        section(root,"Future billing features");
-        text(root,"• Current plan and renewal date\n• Payment method\n• Invoices and receipts\n• Usage limits\n• Upgrade or downgrade\n• Cancel subscription\n• Promo codes",14);
-        Button manage=button(root,"Manage Subscription");manage.setEnabled(false);
-        Button invoices=button(root,"View Invoices");invoices.setEnabled(false);
-        Button support=button(root,"Contact Billing Support");support.setOnClickListener(v->Toast.makeText(this,"Billing support is not configured yet",Toast.LENGTH_LONG).show());
-        setContentView(root);
+        LinearLayout root = UiKit.page(this);
+        UiKit.topBar(this, root, "Billing", true);
+
+        LinearLayout plan = UiKit.card(this, root);
+        plan.addView(UiKit.text(this, "Current plan", 19, true));
+        UiKit.statusRow(this, plan, "Plan", "Development", UiKit.MUTED, UiKit.BLUE_LIGHT);
+        UiKit.statusRow(this, plan, "Payments", "Not connected", UiKit.WARN, UiKit.WARN_BG);
+        plan.addView(UiKit.text(this, "Billing is intentionally inactive until a payment provider and backend are connected.", 13, false));
+
+        LinearLayout features = UiKit.card(this, root);
+        features.addView(UiKit.text(this, "Future billing features", 19, true));
+        features.addView(UiKit.text(this, "• Current plan and renewal date\n• Payment method\n• Invoices and receipts\n• Usage limits\n• Upgrade or downgrade\n• Cancel subscription\n• Promo codes", 14, false));
+
+        LinearLayout actions = UiKit.card(this, root);
+        actions.addView(UiKit.text(this, "Manage", 19, true));
+        Button manage = UiKit.secondaryButton(this, "Manage subscription"); manage.setEnabled(false); manage.setAlpha(0.5f); actions.addView(manage);
+        Button invoices = UiKit.secondaryButton(this, "View invoices"); invoices.setEnabled(false); invoices.setAlpha(0.5f); actions.addView(invoices);
+        Button support = UiKit.secondaryButton(this, "Contact billing support"); actions.addView(support);
+        support.setOnClickListener(v -> Toast.makeText(this, "Billing support is not configured yet", Toast.LENGTH_LONG).show());
+
+        UiKit.setStickyScreen(this, root, "Settings");
     }
-    private void section(LinearLayout p,String s){text(p,s,21);}
-    private TextView text(LinearLayout p,String s,int z){TextView v=new TextView(this);v.setText(s);v.setTextSize(z);v.setPadding(0,dp(8),0,dp(5));p.addView(v);return v;}
-    private Button button(LinearLayout p,String s){Button b=new Button(this);b.setText(s);p.addView(b,new LinearLayout.LayoutParams(-1,-2));return b;}
-    private int dp(int v){return Math.round(v*getResources().getDisplayMetrics().density);}
 }
