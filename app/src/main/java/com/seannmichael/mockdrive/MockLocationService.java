@@ -38,6 +38,11 @@ public class MockLocationService extends Service {
     private Thread worker;
     private LocationManager manager;
     private Point heldPoint;
+    private String historyId = "";
+    private long injectionCount;
+    private int currentSegment;
+    private int totalSegments;
+    private String phase = "idle";
 
     @Override public void onCreate() {
         super.onCreate();
@@ -48,9 +53,9 @@ public class MockLocationService extends Service {
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent == null) return START_STICKY;
         String action = intent.getAction();
-        if (ACTION_STOP.equals(action)) { stopEverything(); return START_NOT_STICKY; }
-        if (ACTION_PAUSE.equals(action)) { paused = true; updateNotice("Paused"); return START_STICKY; }
-        if (ACTION_RESUME.equals(action)) { paused = false; updateNotice("Resumed"); return START_STICKY; }
+        if (ACTION_STOP.equals(action)) { log("SERVICE", "Stop requested"); stopEverything(); return START_NOT_STICKY; }
+        if (ACTION_PAUSE.equals(action)) { paused = true; phase = "paused"; log("SERVICE", "Paused"); updateNotice("Paused"); return START_STICKY; }
+        if (ACTION_RESUME.equals(action)) { paused = false; phase = "driving"; log("SERVICE", "Resumed"); updateNotice("Resumed"); return START_STICKY; }
         if (ACTION_TELEPORT.equals(action)) {
             startForeground(NOTICE, notice("Holding mock location"));
             teleport(intent.getDoubleExtra(EXTRA_LAT, 0), intent.getDoubleExtra(EXTRA_LON, 0));
@@ -65,19 +70,22 @@ public class MockLocationService extends Service {
 
     private void teleport(double lat, double lon) {
         stopWorker();
+        phase = "holding_start";
         try {
             enableProvider();
             heldPoint = new Point(lat, lon);
             running = true;
-            inject(heldPoint, 0f, 0f, 3f);
+            injectAndRecord(heldPoint, 0f, 0f, 3f);
             worker = new Thread(() -> {
+                log("THREAD", "Start-location hold worker started");
                 while (running && heldPoint != null) {
-                    try { inject(heldPoint, 0f, 0f, 3f); Thread.sleep(1000); }
-                    catch (InterruptedException e) { return; }
+                    try { injectAndRecord(heldPoint, 0f, 0f, 3f); Thread.sleep(1000); }
+                    catch (InterruptedException e) { Thread.currentThread().interrupt(); log("THREAD", "Start-location hold interrupted"); return; }
+                    catch (Throwable e) { error("Start-location hold", e); return; }
                 }
             }, "mock-hold");
             worker.start();
-        } catch (SecurityException e) { updateNotice("Select Mock Drive as mock location app"); }
+        } catch (SecurityException e) { error("Teleport security", e); updateNotice("Select Mock Drive as mock location app"); }
     }
 
     private void startTrip(String tripJson) {
@@ -87,16 +95,31 @@ public class MockLocationService extends Service {
             try {
                 JSONObject trip = new JSONObject(tripJson == null ? "{}" : tripJson);
                 id = trip.optString("id", "");
+                JSONObject history = HistoryStore.findByTrip(this, id);
+                if (history == null) history = HistoryStore.begin(this, trip);
+                historyId = history == null ? "" : history.optString("historyId", "");
+                injectionCount = 0;
+                currentSegment = 0;
+                totalSegments = 0;
+                phase = "routing";
+                if (!historyId.isEmpty()) SimulationDiagnostics.begin(this, historyId, trip);
+                log("SERVICE", "Trip worker starting tripId=" + id + " thread=" + Thread.currentThread().getName());
                 if (!id.isEmpty()) TripStore.updateStatus(this, id, "routing");
                 JSONArray waypoints = trip.getJSONArray("waypoints");
+                log("ROUTE", "Requesting route for " + waypoints.length() + " waypoints");
+                long routeStarted = SystemClock.elapsedRealtime();
                 JSONArray coordinates = RouteEngine.roadRoute(waypoints);
+                log("ROUTE", "Route received in " + (SystemClock.elapsedRealtime() - routeStarted) + " ms with " + coordinates.length() + " points");
+                if (!historyId.isEmpty()) SimulationDiagnostics.saveRoute(this, historyId, coordinates);
                 List<Point> points = parse(coordinates);
                 if (points.size() < 2) throw new Exception("Route is empty");
+                totalSegments = points.size() - 1;
 
                 enableProvider();
                 running = true;
                 paused = false;
                 heldPoint = null;
+                phase = "driving";
                 if (!id.isEmpty()) TripStore.updateStatus(this, id, "active");
 
                 double averageMph = clamp(trip.optDouble("averageSpeedMph", 35), 1, 150);
@@ -108,26 +131,27 @@ public class MockLocationService extends Service {
                 boolean hold = trip.optBoolean("holdAtDestination", true);
                 float accuracy = (float) clamp(trip.optDouble("accuracyMeters", 3), 1, 100);
                 Random random = new Random();
+                log("CONFIG", "speedMph=" + averageMph + " variation=" + variation + " updateMs=" + updateMs + " holdAtDestination=" + hold);
 
                 int segment = 0;
                 double onSegment = 0;
                 Point current = points.get(0);
-                inject(current, 0f, 0f, accuracy);
+                injectAndRecord(current, 0f, 0f, accuracy);
 
                 while (running && segment < points.size() - 1) {
-                    while (paused && running) { inject(current, 0f, 0f, accuracy); Thread.sleep(500); }
+                    while (paused && running) { injectAndRecord(current, 0f, 0f, accuracy); Thread.sleep(500); }
                     if (!running) break;
 
                     if (randomStops && random.nextInt(100) < randomStopChance) {
                         int seconds = 1 + random.nextInt(Math.max(1, randomStopMax));
+                        log("STOP", "Random traffic stop for " + seconds + " seconds at segment " + segment);
                         updateNotice("Traffic stop: " + seconds + " sec");
-                        for (int s = 0; s < seconds && running; s++) { inject(current, 0f, 0f, accuracy); Thread.sleep(1000); }
+                        for (int s = 0; s < seconds && running; s++) { injectAndRecord(current, 0f, 0f, accuracy); Thread.sleep(1000); }
                     }
 
                     double mph = averageMph * (1 + ((random.nextDouble() * 2 - 1) * variation));
                     double metersPerSecond = mph * 0.44704;
                     double step = metersPerSecond * updateMs / 1000.0;
-
                     Point from = points.get(segment);
                     Point to = points.get(segment + 1);
                     double length = distance(from, to);
@@ -144,7 +168,8 @@ public class MockLocationService extends Service {
                     if (segment >= points.size() - 1) break;
                     from = points.get(segment); to = points.get(segment + 1); length = distance(from, to);
                     current = interpolate(from, to, Math.min(1, onSegment / Math.max(.1, length)));
-                    inject(current, bearing(from, to), (float) metersPerSecond, accuracy);
+                    currentSegment = segment;
+                    injectAndRecord(current, bearing(from, to), (float) metersPerSecond, accuracy);
                     updateNotice("Driving " + Math.round(mph) + " mph");
                     Thread.sleep(updateMs);
 
@@ -154,9 +179,10 @@ public class MockLocationService extends Service {
                         if (!w.optBoolean("visited", false) && distance(current, stop) < Math.max(20, metersPerSecond * 2)) {
                             w.put("visited", true);
                             int seconds = Math.max(0, w.optInt("stopSeconds", 0));
+                            log("WAYPOINT", "Reached waypoint " + i + ", holding " + seconds + " seconds");
                             for (int s = 0; s < seconds && running; s++) {
                                 updateNotice("Waypoint stop: " + (seconds - s) + " sec");
-                                inject(current, 0f, 0f, accuracy);
+                                injectAndRecord(current, 0f, 0f, accuracy);
                                 Thread.sleep(1000);
                             }
                         }
@@ -165,54 +191,74 @@ public class MockLocationService extends Service {
 
                 if (running) {
                     current = points.get(points.size() - 1);
-                    inject(current, 0f, 0f, accuracy);
+                    phase = "destination";
+                    injectAndRecord(current, 0f, 0f, accuracy);
                     if (!id.isEmpty()) TripStore.updateStatus(this, id, "completed");
+                    log("COMPLETE", "Destination reached after " + injectionCount + " injections");
                     updateNotice("Destination reached");
                     if (hold) {
                         heldPoint = current;
-                        while (running) { inject(heldPoint, 0f, 0f, accuracy); Thread.sleep(1000); }
+                        phase = "holding_destination";
+                        while (running) { injectAndRecord(heldPoint, 0f, 0f, accuracy); Thread.sleep(1000); }
                     }
                 }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log("THREAD", "Trip worker interrupted phase=" + phase + " running=" + running);
             } catch (SecurityException e) {
+                error("Trip security", e);
                 updateNotice("Select Mock Drive as mock location app");
                 if (!id.isEmpty()) TripStore.updateStatus(this, id, "failed");
-            } catch (Exception e) {
+            } catch (Throwable e) {
+                error("Trip failure phase=" + phase, e);
                 updateNotice("Trip failed: " + e.getMessage());
                 if (!id.isEmpty()) TripStore.updateStatus(this, id, "failed");
+            } finally {
+                log("THREAD", "Trip worker exited phase=" + phase + " running=" + running + " injections=" + injectionCount);
+                if (!historyId.isEmpty()) HistoryStore.attachDiagnostics(this, historyId, SimulationDiagnostics.summary(this, historyId));
             }
         }, "mock-trip");
+        worker.setUncaughtExceptionHandler((thread, throwable) -> error("Uncaught on " + thread.getName(), throwable));
         worker.start();
     }
 
-    private List<Point> parse(JSONArray a) throws Exception {
-        List<Point> out = new ArrayList<>();
-        for (int i = 0; i < a.length(); i++) {
-            JSONArray c = a.getJSONArray(i);
-            out.add(new Point(c.getDouble(1), c.getDouble(0)));
-        }
-        return out;
-    }
-
     private void enableProvider() {
-        try { manager.removeTestProvider(LocationManager.GPS_PROVIDER); } catch (Exception ignored) {}
+        log("PROVIDER", "Rebuilding GPS test provider");
+        try { manager.removeTestProvider(LocationManager.GPS_PROVIDER); log("PROVIDER", "Existing GPS test provider removed"); }
+        catch (Exception e) { log("PROVIDER", "Provider removal ignored: " + e.getClass().getSimpleName()); }
         manager.addTestProvider(LocationManager.GPS_PROVIDER, false, false, false, false, true, true, true, Criteria.POWER_LOW, Criteria.ACCURACY_FINE);
         manager.setTestProviderEnabled(LocationManager.GPS_PROVIDER, true);
+        log("PROVIDER", "GPS test provider enabled=" + manager.isProviderEnabled(LocationManager.GPS_PROVIDER));
     }
 
-    private void inject(Point p, float bearing, float speed, float accuracy) {
-        Location l = new Location(LocationManager.GPS_PROVIDER);
-        l.setLatitude(p.lat); l.setLongitude(p.lon); l.setAccuracy(accuracy); l.setAltitude(0);
-        l.setBearing(bearing); l.setSpeed(speed); l.setTime(System.currentTimeMillis());
-        l.setElapsedRealtimeNanos(SystemClock.elapsedRealtimeNanos());
+    private void injectAndRecord(Point p, float bearing, float speed, float accuracy) {
+        Location injected = new Location(LocationManager.GPS_PROVIDER);
+        injected.setLatitude(p.lat); injected.setLongitude(p.lon); injected.setAccuracy(accuracy); injected.setAltitude(0);
+        injected.setBearing(bearing); injected.setSpeed(speed); injected.setTime(System.currentTimeMillis());
+        injected.setElapsedRealtimeNanos(SystemClock.elapsedRealtimeNanos());
         if (Build.VERSION.SDK_INT >= 26) {
-            l.setBearingAccuracyDegrees(3f); l.setSpeedAccuracyMetersPerSecond(.5f); l.setVerticalAccuracyMeters(accuracy);
+            injected.setBearingAccuracyDegrees(3f); injected.setSpeedAccuracyMetersPerSecond(.5f); injected.setVerticalAccuracyMeters(accuracy);
         }
-        manager.setTestProviderLocation(LocationManager.GPS_PROVIDER, l);
+        manager.setTestProviderLocation(LocationManager.GPS_PROVIDER, injected);
+        injectionCount++;
+        Location reported = null;
+        try { reported = manager.getLastKnownLocation(LocationManager.GPS_PROVIDER); }
+        catch (SecurityException e) { error("Readback location", e); }
+        boolean enabled = false;
+        try { enabled = manager.isProviderEnabled(LocationManager.GPS_PROVIDER); } catch (Exception ignored) {}
+        if (!historyId.isEmpty()) SimulationDiagnostics.injection(this, historyId, injectionCount, currentSegment, totalSegments, injected, reported, enabled, worker != null && worker.isAlive(), phase);
+        if (injectionCount == 1 || injectionCount % 10 == 0) {
+            float delta = reported == null ? -1 : injected.distanceTo(reported);
+            log("HEARTBEAT", "injection=" + injectionCount + " segment=" + currentSegment + "/" + totalSegments + " providerEnabled=" + enabled + " readbackDeltaMeters=" + delta);
+        }
     }
 
     private void stopEverything() {
         stopWorker();
         try { manager.removeTestProvider(LocationManager.GPS_PROVIDER); } catch (Exception ignored) {}
+        phase = "stopped";
+        log("SERVICE", "Foreground service stopped and provider removed");
+        if (!historyId.isEmpty()) HistoryStore.attachDiagnostics(this, historyId, SimulationDiagnostics.summary(this, historyId));
         stopForeground(true); stopSelf();
     }
 
@@ -222,33 +268,16 @@ public class MockLocationService extends Service {
         worker = null;
     }
 
-    private void createChannel() {
-        if (Build.VERSION.SDK_INT >= 26) {
-            NotificationChannel c = new NotificationChannel(CHANNEL, "Mock Drive", NotificationManager.IMPORTANCE_LOW);
-            getSystemService(NotificationManager.class).createNotificationChannel(c);
-        }
-    }
-
-    private Notification notice(String text) {
-        PendingIntent pi = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, CHANNEL) : new Notification.Builder(this);
-        return b.setContentTitle("Mock Drive").setContentText(text).setSmallIcon(android.R.drawable.ic_menu_mylocation).setOngoing(true).setContentIntent(pi).build();
-    }
-
+    private void log(String category, String message) { if (!historyId.isEmpty()) SimulationDiagnostics.event(this, historyId, category, message); }
+    private void error(String where, Throwable error) { if (!historyId.isEmpty()) SimulationDiagnostics.exception(this, historyId, where, error); }
+    private List<Point> parse(JSONArray a) throws Exception { List<Point> out = new ArrayList<>(); for (int i = 0; i < a.length(); i++) { JSONArray c = a.getJSONArray(i); out.add(new Point(c.getDouble(1), c.getDouble(0))); } return out; }
+    private void createChannel() { if (Build.VERSION.SDK_INT >= 26) { NotificationChannel c = new NotificationChannel(CHANNEL, "Mock Drive", NotificationManager.IMPORTANCE_LOW); getSystemService(NotificationManager.class).createNotificationChannel(c); } }
+    private Notification notice(String text) { PendingIntent pi = PendingIntent.getActivity(this, 0, new Intent(this, NavigationRunActivity.class), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE); Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, CHANNEL) : new Notification.Builder(this); return b.setContentTitle("Mock Drive").setContentText(text).setSmallIcon(android.R.drawable.ic_menu_mylocation).setOngoing(true).setContentIntent(pi).build(); }
     private void updateNotice(String text) { ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(NOTICE, notice(text)); }
     private static double clamp(double v, double min, double max) { return Math.max(min, Math.min(max, v)); }
-    private static double distance(Point a, Point b) {
-        double earth = 6371000, p1 = Math.toRadians(a.lat), p2 = Math.toRadians(b.lat);
-        double dp = Math.toRadians(b.lat-a.lat), dl = Math.toRadians(b.lon-a.lon);
-        double h = Math.sin(dp/2)*Math.sin(dp/2)+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)*Math.sin(dl/2);
-        return earth*2*Math.atan2(Math.sqrt(h), Math.sqrt(1-h));
-    }
+    private static double distance(Point a, Point b) { double earth = 6371000, p1 = Math.toRadians(a.lat), p2 = Math.toRadians(b.lat); double dp = Math.toRadians(b.lat-a.lat), dl = Math.toRadians(b.lon-a.lon); double h = Math.sin(dp/2)*Math.sin(dp/2)+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)*Math.sin(dl/2); return earth*2*Math.atan2(Math.sqrt(h), Math.sqrt(1-h)); }
     private static Point interpolate(Point a, Point b, double f) { return new Point(a.lat+(b.lat-a.lat)*f, a.lon+(b.lon-a.lon)*f); }
-    private static float bearing(Point a, Point b) {
-        double p1=Math.toRadians(a.lat), p2=Math.toRadians(b.lat), dl=Math.toRadians(b.lon-a.lon);
-        double y=Math.sin(dl)*Math.cos(p2), x=Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl);
-        return (float)((Math.toDegrees(Math.atan2(y,x))+360)%360);
-    }
+    private static float bearing(Point a, Point b) { double p1=Math.toRadians(a.lat), p2=Math.toRadians(b.lat), dl=Math.toRadians(b.lon-a.lon); double y=Math.sin(dl)*Math.cos(p2), x=Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl); return (float)((Math.toDegrees(Math.atan2(y,x))+360)%360); }
     @Override public IBinder onBind(Intent intent) { return null; }
     private static final class Point { final double lat, lon; Point(double lat, double lon) { this.lat=lat; this.lon=lon; } }
 }
