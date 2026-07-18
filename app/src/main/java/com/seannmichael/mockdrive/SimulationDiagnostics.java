@@ -2,7 +2,6 @@ package com.seannmichael.mockdrive;
 
 import android.content.Context;
 import android.location.Location;
-import android.location.LocationManager;
 import android.os.Build;
 import android.os.SystemClock;
 
@@ -136,7 +135,7 @@ public final class SimulationDiagnostics {
         }
     }
 
-    private static JSONObject locationJson(Location location) throws Exception {
+    private static Object locationJson(Location location) throws Exception {
         if (location == null) return JSONObject.NULL;
         return new JSONObject()
                 .put("provider", location.getProvider())
