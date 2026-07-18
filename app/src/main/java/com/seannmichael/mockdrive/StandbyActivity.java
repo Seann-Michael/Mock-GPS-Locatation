@@ -1,7 +1,10 @@
 package com.seannmichael.mockdrive;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.widget.Button;
@@ -13,6 +16,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.text.DateFormat;
+import java.util.ArrayList;
 
 public class StandbyActivity extends Activity {
     private final Handler handler=new Handler();
@@ -21,6 +25,7 @@ public class StandbyActivity extends Activity {
 
     @Override protected void onCreate(Bundle state){
         super.onCreate(state);
+        requestPermissionsIfNeeded();
         LinearLayout root=UiKit.page(this);
         UiKit.topBar(this,root,"Mock Drive",false);
 
@@ -41,7 +46,7 @@ public class StandbyActivity extends Activity {
 
         LinearLayout controls=UiKit.card(this,root);
         controls.addView(UiKit.text(this,"Device controls",19,true));
-        Button api=UiKit.secondaryButton(this,"Start local API");controls.addView(api);api.setOnClickListener(v->{Intent i=new Intent(this,ApiService.class).setAction(ApiService.ACTION_START);if(android.os.Build.VERSION.SDK_INT>=26)startForegroundService(i);else startService(i);refresh();});
+        Button api=UiKit.secondaryButton(this,"Start local API");controls.addView(api);api.setOnClickListener(v->{Intent i=new Intent(this,ApiService.class).setAction(ApiService.ACTION_START);if(Build.VERSION.SDK_INT>=26)startForegroundService(i);else startService(i);refresh();});
         Button stop=UiKit.secondaryButton(this,"Emergency stop and restore GPS");controls.addView(stop);stop.setOnClickListener(v->startService(new Intent(this,MockLocationService.class).setAction(MockLocationService.ACTION_STOP)));
 
         UiKit.bottomNav(this,root,"Home");
@@ -51,11 +56,21 @@ public class StandbyActivity extends Activity {
     @Override protected void onResume(){super.onResume();handler.post(refreshTask);}
     @Override protected void onPause(){handler.removeCallbacks(refreshTask);super.onPause();}
 
+    private void requestPermissionsIfNeeded(){
+        if(Build.VERSION.SDK_INT<23)return;
+        ArrayList<String> permissions=new ArrayList<>();
+        if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED)permissions.add(Manifest.permission.ACCESS_FINE_LOCATION);
+        if(checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED)permissions.add(Manifest.permission.ACCESS_COARSE_LOCATION);
+        if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)permissions.add(Manifest.permission.POST_NOTIFICATIONS);
+        if(!permissions.isEmpty())requestPermissions(permissions.toArray(new String[0]),100);
+    }
+
     private void refresh(){
         JSONArray campaigns=CampaignStore.all(this);JSONArray trips=TripStore.all(this);
         long next=Long.MAX_VALUE;String nextName="None";
         for(int i=0;i<campaigns.length();i++){JSONObject c=campaigns.optJSONObject(i);if(c==null||!c.optBoolean("enabled",true))continue;long t=c.optLong("startAtEpochMs",0);if(t>System.currentTimeMillis()&&t<next){next=t;nextName=c.optString("name","Campaign");}}
-        deviceStatus.setText("Saved campaigns: "+campaigns.length()+"   •   Queued trips: "+trips.length()+"\nLocal API: port 8765   •   Mock provider required");
+        boolean locationGranted=Build.VERSION.SDK_INT<23||checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED;
+        deviceStatus.setText("Location permission: "+(locationGranted?"Granted":"Required")+"\nSaved campaigns: "+campaigns.length()+"   •   Queued trips: "+trips.length()+"\nLocal API: port 8765   •   Select Mock Drive in Developer Options");
         nextStatus.setText(next==Long.MAX_VALUE?"No campaign is currently scheduled.":nextName+"\n"+DateFormat.getDateTimeInstance().format(next));
     }
 }
