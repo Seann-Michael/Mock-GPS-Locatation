@@ -89,8 +89,6 @@ public class MainActivity extends Activity {
 
         button(root, "Start Now").setOnClickListener(v -> startNow());
         button(root, "Save / Queue Trip").setOnClickListener(v -> saveTrip());
-        button(root, "Pause").setOnClickListener(v -> command(MockLocationService.ACTION_PAUSE));
-        button(root, "Resume").setOnClickListener(v -> command(MockLocationService.ACTION_RESUME));
         button(root, "Stop and Restore Real GPS").setOnClickListener(v -> command(MockLocationService.ACTION_STOP));
 
         addLabel(root, "Remote API", 20);
