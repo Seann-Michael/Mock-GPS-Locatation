@@ -11,38 +11,43 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
+      - name: Check out repository without Node actions
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" .
+          git checkout "${GITHUB_SHA}"
 
-      - name: Set up Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
+      - name: Install Java and Gradle
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y openjdk-17-jdk unzip wget
+          wget -q https://services.gradle.org/distributions/gradle-8.9-bin.zip -O /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /tmp
+          java -version
+          /tmp/gradle-8.9/bin/gradle --version
 
       - name: Build debug APK
-        run: gradle :app:assembleDebug --stacktrace
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/gradle-8.9/bin/gradle :app:assembleDebug --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk MockDrive.apk
+          test -s MockDrive.apk
 
-      - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk MockDrive.apk
-
-      - name: Upload installable APK artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: MockDrive-APK
-          path: MockDrive.apk
-          if-no-files-found: error
-
-      - name: Publish APK as GitHub release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: build-${{ github.run_number }}
-          name: Mock Drive build ${{ github.run_number }}
-          prerelease: true
-          files: MockDrive.apk
+      - name: Publish installable APK release
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="build-${GITHUB_RUN_NUMBER}"
+          gh release create "${TAG}" MockDrive.apk \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Mock Drive build ${GITHUB_RUN_NUMBER}" \
+            --notes "Automated Android development build from commit ${GITHUB_SHA}." \
+            --prerelease
