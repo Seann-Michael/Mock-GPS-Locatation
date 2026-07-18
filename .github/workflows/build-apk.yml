@@ -49,7 +49,7 @@ jobs:
           test -s "MockDrive-${SAFE_REF}.apk"
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: MockDrive-${{ env.SAFE_REF }}
           path: MockDrive-${{ env.SAFE_REF }}.apk
