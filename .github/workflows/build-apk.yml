@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -29,9 +29,20 @@ jobs:
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
 
-      - name: Upload installable APK
+      - name: Rename APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk MockDrive.apk
+
+      - name: Upload installable APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: MockDrive-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: MockDrive.apk
           if-no-files-found: error
+
+      - name: Publish APK as GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Mock Drive build ${{ github.run_number }}
+          prerelease: true
+          files: MockDrive.apk
