@@ -2,7 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [ '**' ]
   workflow_dispatch:
 
 permissions:
@@ -22,6 +22,13 @@ jobs:
           git clone "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" .
           git checkout "${GITHUB_SHA}"
 
+      - name: Compute branch label
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Branch names can contain '/', which is invalid in file names and release tags.
+          echo "SAFE_REF=$(echo "${GITHUB_REF_NAME}" | tr '/' '-')" >> "$GITHUB_ENV"
+
       - name: Install Java and Gradle
         shell: bash
         run: |
@@ -38,14 +45,14 @@ jobs:
         run: |
           set -euo pipefail
           /tmp/gradle-8.9/bin/gradle :app:assembleDebug --stacktrace
-          cp app/build/outputs/apk/debug/app-debug.apk MockDrive.apk
-          test -s MockDrive.apk
+          cp app/build/outputs/apk/debug/app-debug.apk "MockDrive-${SAFE_REF}.apk"
+          test -s "MockDrive-${SAFE_REF}.apk"
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: MockDrive-APK
-          path: MockDrive.apk
+          name: MockDrive-${{ env.SAFE_REF }}
+          path: MockDrive-${{ env.SAFE_REF }}.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -53,9 +60,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TAG="build-${GITHUB_RUN_NUMBER}"
-          gh release create "${TAG}" MockDrive.apk \
+          TAG="build-${SAFE_REF}-${GITHUB_RUN_NUMBER}"
+          gh release create "${TAG}" "MockDrive-${SAFE_REF}.apk" \
             --repo "${GITHUB_REPOSITORY}" \
-            --title "Mock Drive build ${GITHUB_RUN_NUMBER}" \
-            --notes "Automated Android development build from commit ${GITHUB_SHA}." \
+            --title "Mock Drive ${SAFE_REF} #${GITHUB_RUN_NUMBER}" \
+            --notes "Automated Android build from ${GITHUB_REF_NAME} @ ${GITHUB_SHA}." \
             --prerelease
