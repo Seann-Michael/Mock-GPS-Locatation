@@ -43,5 +43,7 @@ android {
 }
 
 dependencies {
-    implementation 'com.google.android.gms:play-services-location:21.4.0'
+    // 21.3.0 supports the Fused mock APIs while remaining compatible with this
+    // project's compileSdk 35 GitHub Actions build environment.
+    implementation 'com.google.android.gms:play-services-location:21.3.0'
 }
