@@ -13,10 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -33,14 +33,14 @@ jobs:
         run: cp app/build/outputs/apk/debug/app-debug.apk MockDrive.apk
 
       - name: Upload installable APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: MockDrive-APK
           path: MockDrive.apk
           if-no-files-found: error
 
       - name: Publish APK as GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: build-${{ github.run_number }}
           name: Mock Drive build ${{ github.run_number }}
