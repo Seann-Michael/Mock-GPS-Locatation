@@ -23,6 +23,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".SettingsActivity" android:exported="false" />
+        <activity android:name=".LicenseActivity" android:exported="false" />
+        <activity android:name=".BillingActivity" android:exported="false" />
+        <activity android:name=".DiagnosticsActivity" android:exported="false" />
 
         <service android:name=".MockLocationService" android:exported="false" android:foregroundServiceType="location" />
         <service android:name=".ApiService" android:exported="false" android:foregroundServiceType="dataSync" />
