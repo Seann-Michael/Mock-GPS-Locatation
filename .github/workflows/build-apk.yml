@@ -58,11 +58,38 @@ jobs:
           cp app/build/outputs/apk/debug/app-debug.apk MockDrive.apk
           test -s MockDrive.apk
 
+      - name: Create updater metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="build-${GITHUB_RUN_NUMBER}"
+          VERSION_CODE=$((1000 + GITHUB_RUN_NUMBER))
+          VERSION_NAME="1.2.${GITHUB_RUN_NUMBER}"
+          APK_SIZE="$(stat -c%s MockDrive.apk)"
+          APK_SHA256="$(sha256sum MockDrive.apk | awk '{print $1}')"
+          APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/MockDrive.apk"
+          cat > update.json <<EOF
+          {
+            "versionCode": ${VERSION_CODE},
+            "versionName": "${VERSION_NAME}",
+            "tag": "${TAG}",
+            "apkName": "MockDrive.apk",
+            "apkUrl": "${APK_URL}",
+            "sizeBytes": ${APK_SIZE},
+            "sha256": "${APK_SHA256}",
+            "commit": "${GITHUB_SHA}",
+            "publishedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+          cat update.json
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: MockDrive-APK
-          path: MockDrive.apk
+          path: |
+            MockDrive.apk
+            update.json
           if-no-files-found: error
           retention-days: 30
 
@@ -71,7 +98,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG="build-${GITHUB_RUN_NUMBER}"
-          gh release create "${TAG}" MockDrive.apk \
+          gh release create "${TAG}" MockDrive.apk update.json \
             --repo "${GITHUB_REPOSITORY}" \
             --title "Mock Drive build ${GITHUB_RUN_NUMBER}" \
             --notes "Automated Android development build from commit ${GITHUB_SHA}. Version code $((1000 + GITHUB_RUN_NUMBER))." \
