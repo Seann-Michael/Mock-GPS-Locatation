@@ -1,6 +1,5 @@
 package com.seannmichael.mockdrive;
 
-import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -14,7 +13,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-public class AccessSettingsActivity extends Activity {
+public class AccessSettingsActivity extends BaseActivity {
     private TextView apiStatus;
     @Override protected void onCreate(Bundle state){
         super.onCreate(state);LinearLayout root=UiKit.page(this);UiKit.topBar(this,root,"API and access",true);
@@ -23,14 +22,14 @@ public class AccessSettingsActivity extends Activity {
         Button copy=UiKit.secondaryButton(this,"Copy current API key");api.addView(copy);copy.setOnClickListener(v->{String key=AppPreferences.apiKey(this);if(key==null||key.startsWith("revoked-"))toast("No active key");else{copy(key);toast("API key copied");}});
         Button revoke=UiKit.secondaryButton(this,"Revoke API key");api.addView(revoke);revoke.setOnClickListener(v->{AppPreferences.revokeApiKey(this);refresh();toast("API key revoked");});
 
-        LinearLayout google=UiKit.card(this,root);google.addView(UiKit.text(this,"Google Places key",20,true));google.addView(UiKit.text(this,"Optional. This is reserved for future business-search features.",13,false));
+        LinearLayout google=UiKit.card(this,root);google.addView(UiKit.text(this,"Google Places key",20,true));google.addView(UiKit.text(this,"Used for address and business suggestions on the Drive page.",13,false));
         EditText places=UiKit.field(this,"Google Places API key",GooglePlacesEngine.getApiKey(this));places.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);google.addView(places);
         Button savePlaces=UiKit.secondaryButton(this,"Save Google key");google.addView(savePlaces);savePlaces.setOnClickListener(v->{GooglePlacesEngine.setApiKey(this,places.getText().toString().trim());toast("Google key saved");});
 
         LinearLayout account=UiKit.card(this,root);account.addView(UiKit.text(this,"Account",20,true));account.addView(UiKit.text(this,"License and billing are placeholders for later.",13,false));
         Button license=UiKit.secondaryButton(this,"License");account.addView(license);license.setOnClickListener(v->startActivity(new Intent(this,LicenseActivity.class)));
         Button billing=UiKit.secondaryButton(this,"Billing");account.addView(billing);billing.setOnClickListener(v->startActivity(new Intent(this,BillingActivity.class)));
-        ScrollView s=new ScrollView(this);s.addView(root);setContentView(s);refresh();
+        ScrollView s=new ScrollView(this);s.setFillViewport(true);s.addView(root);setContentView(s);refresh();
     }
     private void refresh(){String key=AppPreferences.apiKey(this);boolean active=key!=null&&!key.startsWith("revoked-");apiStatus.setText(active?"Status: Active":"Status: No active key");}
     private void copy(String text){((ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Mock Drive API key",text));}
