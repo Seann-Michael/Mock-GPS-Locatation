@@ -10,7 +10,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.InputType;
-import android.view.View;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -174,7 +173,10 @@ public class MainActivity extends Activity {
         if (start && Build.VERSION.SDK_INT >= 26) startForegroundService(i); else startService(i);
         status.setText(start ? "API running on port 8765" : "API stopped");
     }
-    private void refreshQueue() { queue.setText(TripStore.all(this).toString(2)); }
+    private void refreshQueue() {
+        try { queue.setText(TripStore.all(this).toString(2)); }
+        catch (Exception e) { queue.setText(TripStore.all(this).toString()); }
+    }
 
     private EditText field(LinearLayout p, String hint, String value) {
         EditText e = new EditText(this); e.setHint(hint); e.setText(value); e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
