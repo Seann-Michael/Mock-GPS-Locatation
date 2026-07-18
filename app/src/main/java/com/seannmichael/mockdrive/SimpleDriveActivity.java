@@ -6,10 +6,13 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.widget.ArrayAdapter;
+import android.widget.AutoCompleteTextView;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -17,40 +20,43 @@ import android.widget.Toast;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.util.ArrayList;
+
 public class SimpleDriveActivity extends Activity {
-    private EditText startAddress,startLat,startLon,destinationAddress,destinationLat,destinationLon;
+    private AutoCompleteTextView startAddress,destinationAddress;
+    private EditText startLat,startLon,destinationLat,destinationLon;
     private TextView status,speedValue;
     private SeekBar speedBar;
     private int selectedSpeed=35;
+    private final Handler searchHandler=new Handler();
 
     @Override protected void onCreate(Bundle state){
         super.onCreate(state);
         LinearLayout root=UiKit.page(this);UiKit.topBar(this,root,"Drive",true);
         LinearLayout hero=UiKit.hero(this,root);
         hero.addView(UiKit.whiteText(this,"Mock navigation",27,true));
-        hero.addView(UiKit.whiteText(this,"Choose point A and point B. You can change the simulated speed at any time while the trip is running.",15,false));
+        hero.addView(UiKit.whiteText(this,"Type an address or business, choose a suggestion, then start the drive.",15,false));
 
         LinearLayout startCard=UiKit.card(this,root);
         startCard.addView(UiKit.text(this,"A  Starting location",20,true));
-        startCard.addView(UiKit.text(this,"Where the phone should appear before the drive starts",13,false));
-        startAddress=UiKit.field(this,"Search starting address","");startCard.addView(startAddress);
-        Button findStart=UiKit.secondaryButton(this,"Find starting address");startCard.addView(findStart);
+        startCard.addView(UiKit.text(this,"Begin typing and choose the correct result",13,false));
+        startAddress=UiKit.autocompleteField(this,"Search address or business");startCard.addView(startAddress);
         startLat=UiKit.field(this,"Latitude","41.181097");startCard.addView(startLat);
         startLon=UiKit.field(this,"Longitude","-81.974890");startCard.addView(startLon);
-        findStart.setOnClickListener(v->geocode(startAddress.getText().toString(),startLat,startLon,"Start"));
 
         LinearLayout destinationCard=UiKit.card(this,root);
         destinationCard.addView(UiKit.text(this,"B  Destination",20,true));
-        destinationCard.addView(UiKit.text(this,"Where Google Maps should navigate",13,false));
-        destinationAddress=UiKit.field(this,"Search destination address","");destinationCard.addView(destinationAddress);
-        Button findDestination=UiKit.secondaryButton(this,"Find destination address");destinationCard.addView(findDestination);
+        destinationCard.addView(UiKit.text(this,"Choose where Google Maps should navigate",13,false));
+        destinationAddress=UiKit.autocompleteField(this,"Search address or business");destinationCard.addView(destinationAddress);
         destinationLat=UiKit.field(this,"Latitude","");destinationCard.addView(destinationLat);
         destinationLon=UiKit.field(this,"Longitude","");destinationCard.addView(destinationLon);
-        findDestination.setOnClickListener(v->geocode(destinationAddress.getText().toString(),destinationLat,destinationLon,"Destination"));
+
+        setupAutocomplete(startAddress,startLat,startLon,"Start");
+        setupAutocomplete(destinationAddress,destinationLat,destinationLon,"Destination");
 
         LinearLayout speedCard=UiKit.card(this,root);
         speedCard.addView(UiKit.text(this,"Travel speed",20,true));
-        speedCard.addView(UiKit.text(this,"Move the slider, then tap Apply. It changes the active trip immediately.",13,false));
+        speedCard.addView(UiKit.text(this,"Move the slider, then tap Apply to change an active trip",13,false));
         speedValue=UiKit.text(this,"35 mph",30,true);speedValue.setTextColor(UiKit.BLUE_DARK);speedCard.addView(speedValue);
         speedBar=new SeekBar(this);speedBar.setMax(95);speedBar.setProgress(30);speedCard.addView(speedBar,new LinearLayout.LayoutParams(-1,-2));
         speedBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
@@ -72,12 +78,35 @@ public class SimpleDriveActivity extends Activity {
         resume.setOnClickListener(v->{startService(new Intent(this,MockLocationService.class).setAction(MockLocationService.ACTION_RESUME));status.setText("Drive resumed at "+selectedSpeed+" mph.");});
         stop.setOnClickListener(v->{startService(new Intent(this,MockLocationService.class).setAction(MockLocationService.ACTION_STOP));status.setText("Simulation stopped. Real GPS restored.");});
 
-        UiKit.bottomNav(this,root,"Drive");ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.addView(root);setContentView(scroll);
+        UiKit.setStickyScreen(this,root,"Drive");
     }
 
-    private void geocode(String query,EditText latField,EditText lonField,String label){
-        if(query==null||query.trim().isEmpty()){toast("Enter an address");return;}status.setText("Finding "+label.toLowerCase()+"…");
-        new Thread(()->{try{JSONObject p=RouteEngine.geocode(query.trim());runOnUiThread(()->{latField.setText(String.valueOf(p.optDouble("latitude")));lonField.setText(String.valueOf(p.optDouble("longitude")));status.setText(label+" found: "+p.optString("label"));});}catch(Exception e){runOnUiThread(()->status.setText(label+" lookup failed: "+e.getMessage()));}},"simple-geocode").start();
+    private void setupAutocomplete(AutoCompleteTextView input,EditText lat,EditText lon,String label){
+        final ArrayList<String> labels=new ArrayList<>();
+        final ArrayList<String> ids=new ArrayList<>();
+        final ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_dropdown_item_1line,labels);
+        input.setAdapter(adapter);
+        input.setOnItemClickListener((parent,view,position,id)->{
+            if(position<0||position>=ids.size())return;
+            String placeId=ids.get(position);status.setText("Loading "+label.toLowerCase()+" details…");
+            new Thread(()->{try{JSONObject place=GooglePlacesEngine.placeDetails(this,placeId);runOnUiThread(()->{
+                input.setText(place.optString("formattedAddress",place.optString("label","")),false);
+                lat.setText(String.valueOf(place.optDouble("latitude")));lon.setText(String.valueOf(place.optDouble("longitude")));
+                status.setText(label+" selected: "+place.optString("label"));
+            });}catch(Exception e){runOnUiThread(()->status.setText("Could not load place: "+e.getMessage()));}},"place-details").start();
+        });
+        input.addTextChangedListener(new TextWatcher(){
+            Runnable pending;
+            @Override public void beforeTextChanged(CharSequence s,int st,int c,int a){}
+            @Override public void onTextChanged(CharSequence s,int st,int before,int count){
+                if(pending!=null)searchHandler.removeCallbacks(pending);
+                String q=s==null?"":s.toString().trim();
+                if(q.length()<2){labels.clear();ids.clear();adapter.notifyDataSetChanged();return;}
+                pending=()->new Thread(()->{try{JSONArray results=GooglePlacesEngine.autocomplete(SimpleDriveActivity.this,q);ArrayList<String> nextLabels=new ArrayList<>();ArrayList<String> nextIds=new ArrayList<>();for(int i=0;i<results.length();i++){JSONObject r=results.optJSONObject(i);if(r!=null){nextLabels.add(r.optString("label"));nextIds.add(r.optString("placeId"));}}runOnUiThread(()->{labels.clear();labels.addAll(nextLabels);ids.clear();ids.addAll(nextIds);adapter.notifyDataSetChanged();if(input.hasFocus()&&!labels.isEmpty())input.showDropDown();});}catch(Exception e){runOnUiThread(()->status.setText(e.getMessage()));}},"places-autocomplete").start();
+                searchHandler.postDelayed(pending,350);
+            }
+            @Override public void afterTextChanged(Editable s){}
+        });
     }
 
     private void startNavigation(){
@@ -90,7 +119,8 @@ public class SimpleDriveActivity extends Activity {
             JSONObject trip=new JSONObject().put("name","Simple A to B drive").put("waypoints",waypoints).put("averageSpeedMph",selectedSpeed).put("speedVariationPercent",0).put("gpsUpdateIntervalMs",1000).put("speedProfile","fixed").put("randomStops",false).put("holdAtDestination",true).put("recurrence","none");
             JSONObject saved=TripStore.save(this,trip);
             new Handler().postDelayed(()->{try{String destination=bLat+","+bLon;String url="https://www.google.com/maps/dir/?api=1&origin="+aLat+","+aLon+"&destination="+Uri.encode(destination)+"&travelmode=driving&dir_action=navigate";Intent maps=new Intent(Intent.ACTION_VIEW,Uri.parse(url));maps.setPackage("com.google.android.apps.maps");try{startActivity(maps);}catch(Exception e){maps.setPackage(null);startActivity(maps);}TripScheduler.launch(this,saved);status.setText("Navigation active at "+selectedSpeed+" mph.");}catch(Exception e){status.setText("Could not start navigation: "+e.getMessage());}},1500);
-        }catch(Exception e){toast("Enter valid start and destination values");}
+        }catch(Exception e){toast("Choose both locations or enter valid coordinates");}
     }
+
     private void toast(String message){Toast.makeText(this,message,Toast.LENGTH_LONG).show();}
 }
