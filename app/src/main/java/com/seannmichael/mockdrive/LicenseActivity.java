@@ -1,27 +1,98 @@
 package com.seannmichael.mockdrive;
 
-import android.app.Activity;
 import android.os.Bundle;
+import android.text.InputType;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
-public class LicenseActivity extends Activity {
+public class LicenseActivity extends BaseActivity {
+    private EditText licenseKey;
+    private TextView statusValue;
+    private TextView statusDetail;
+    private Button removeButton;
+
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);int p=dp(16);root.setPadding(p,p,p,p);
-        text(root,"License",28);
-        text(root,"License validation will be connected to the future licensing server. This page currently stores the entered key on this device but does not treat it as verified.",14);
-        EditText key=new EditText(this);key.setHint("License key");key.setText(AppPreferences.licenseKey(this));root.addView(key,new LinearLayout.LayoutParams(-1,-2));
-        Button save=button(root,"Save License Key");save.setOnClickListener(v->{AppPreferences.saveLicenseKey(this,key.getText().toString().trim());Toast.makeText(this,"License key saved as unverified",Toast.LENGTH_LONG).show();});
-        Button clear=button(root,"Remove License Key");clear.setOnClickListener(v->{AppPreferences.clearLicenseKey(this);key.setText("");Toast.makeText(this,"License key removed",Toast.LENGTH_LONG).show();});
-        text(root,"Status: Not connected to licensing server",16);
-        text(root,"Planned: activation, expiration, device limits, transfer, revocation, and offline grace period.",14);
-        setContentView(root);
+
+        LinearLayout root = UiKit.page(this);
+        UiKit.topBar(this, root, "Licensing", true);
+
+        LinearLayout hero = UiKit.hero(this, root);
+        hero.addView(UiKit.whiteText(this, "Device license", 27, true));
+        hero.addView(UiKit.whiteText(this,
+                "Store the license assigned to this phone. Verification and billing will be connected later.",
+                15, false));
+
+        LinearLayout statusCard = UiKit.card(this, root);
+        statusCard.addView(UiKit.text(this, "License status", 20, true));
+        statusValue = UiKit.text(this, "", 24, true);
+        statusValue.setTextColor(UiKit.BLUE_DARK);
+        statusCard.addView(statusValue);
+        statusDetail = UiKit.text(this, "", 14, false);
+        statusCard.addView(statusDetail);
+
+        LinearLayout keyCard = UiKit.card(this, root);
+        keyCard.addView(UiKit.text(this, "License key", 20, true));
+        keyCard.addView(UiKit.text(this,
+                "The key is stored only on this Android device. It is not currently sent to a licensing server.",
+                13, false));
+
+        licenseKey = UiKit.field(this, "Enter license key", AppPreferences.licenseKey(this));
+        licenseKey.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
+        licenseKey.setSingleLine(true);
+        keyCard.addView(licenseKey);
+
+        Button saveButton = UiKit.button(this, "Save license key");
+        keyCard.addView(saveButton);
+        saveButton.setOnClickListener(v -> saveLicense());
+
+        removeButton = UiKit.secondaryButton(this, "Remove license key");
+        keyCard.addView(removeButton);
+        removeButton.setOnClickListener(v -> removeLicense());
+
+        LinearLayout futureCard = UiKit.card(this, root);
+        futureCard.addView(UiKit.text(this, "Planned licensing features", 20, true));
+        futureCard.addView(UiKit.text(this,
+                "Activation and verification\n" +
+                "Expiration and renewal status\n" +
+                "Device limits and transfers\n" +
+                "Revocation support\n" +
+                "Offline grace period",
+                14, false));
+
+        refreshStatus();
+        UiKit.setStickyScreen(this, root, "Settings");
     }
-    private TextView text(LinearLayout p,String s,int z){TextView v=new TextView(this);v.setText(s);v.setTextSize(z);v.setPadding(0,dp(8),0,dp(5));p.addView(v);return v;}
-    private Button button(LinearLayout p,String s){Button b=new Button(this);b.setText(s);p.addView(b,new LinearLayout.LayoutParams(-1,-2));return b;}
-    private int dp(int v){return Math.round(v*getResources().getDisplayMetrics().density);}
+
+    private void saveLicense() {
+        String value = licenseKey.getText().toString().trim();
+        if (value.isEmpty()) {
+            Toast.makeText(this, "Enter a license key first", Toast.LENGTH_LONG).show();
+            return;
+        }
+        AppPreferences.saveLicenseKey(this, value);
+        licenseKey.setText(value);
+        refreshStatus();
+        Toast.makeText(this, "License key saved locally as unverified", Toast.LENGTH_LONG).show();
+    }
+
+    private void removeLicense() {
+        AppPreferences.clearLicenseKey(this);
+        licenseKey.setText("");
+        refreshStatus();
+        Toast.makeText(this, "License key removed", Toast.LENGTH_LONG).show();
+    }
+
+    private void refreshStatus() {
+        boolean hasKey = !AppPreferences.licenseKey(this).trim().isEmpty();
+        statusValue.setText(hasKey ? "Key stored locally" : "No license key");
+        statusDetail.setText(hasKey
+                ? "This key has not been verified. Server-based license validation is a future feature."
+                : "Add a license key when one is assigned to this device.");
+        removeButton.setEnabled(hasKey);
+        removeButton.setAlpha(hasKey ? 1f : 0.5f);
+    }
 }
