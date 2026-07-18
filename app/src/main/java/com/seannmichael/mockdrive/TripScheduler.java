@@ -9,6 +9,8 @@ import android.os.Build;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.util.Calendar;
+
 public final class TripScheduler {
     private TripScheduler() {}
 
@@ -23,6 +25,22 @@ public final class TripScheduler {
         if (Build.VERSION.SDK_INT >= 23) am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, when, pi);
         else am.setExact(AlarmManager.RTC_WAKEUP, when, pi);
         TripStore.updateStatus(context, trip.getString("id"), "scheduled");
+    }
+
+    public static void scheduleNext(Context context, JSONObject trip) {
+        try {
+            String recurrence = trip.optString("recurrence", "none");
+            if ("none".equals(recurrence)) return;
+            Calendar c = Calendar.getInstance();
+            c.setTimeInMillis(Math.max(System.currentTimeMillis(), trip.optLong("startAtEpochMs", System.currentTimeMillis())));
+            if ("daily".equals(recurrence)) c.add(Calendar.DAY_OF_YEAR, 1);
+            else if ("weekly".equals(recurrence)) c.add(Calendar.WEEK_OF_YEAR, 1);
+            else if ("monthly".equals(recurrence)) c.add(Calendar.MONTH, 1);
+            else return;
+            trip.put("startAtEpochMs", c.getTimeInMillis());
+            trip.put("status", "scheduled");
+            schedule(context, trip);
+        } catch (Exception ignored) {}
     }
 
     public static void cancel(Context context, String id) {
