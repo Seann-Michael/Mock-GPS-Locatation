@@ -25,6 +25,7 @@ public final class SimulationDiagnostics {
     private static final Object LOCK = new Object();
     private static final String ROOT = "simulation_history_diagnostics";
     private static final SimpleDateFormat TIME = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US);
+
     private SimulationDiagnostics() {}
 
     public static File directory(Context context, String historyId) {
@@ -34,6 +35,7 @@ public final class SimulationDiagnostics {
     }
 
     public static void begin(Context context, String historyId, JSONObject trip) {
+        if (historyId == null || historyId.isEmpty()) return;
         synchronized (LOCK) {
             File dir = directory(context, historyId);
             deleteContents(dir);
@@ -56,45 +58,74 @@ public final class SimulationDiagnostics {
     }
 
     public static void saveRoute(Context context, String historyId, JSONArray route) {
+        if (historyId == null || historyId.isEmpty()) return;
         synchronized (LOCK) {
             write(new File(directory(context, historyId), "route.json"), route == null ? "[]" : route.toString());
-            event(context, historyId, "ROUTE", "Saved route with " + (route == null ? 0 : route.length()) + " coordinates");
+            event(context, historyId, "ROUTE", "Saved route geometry with " + (route == null ? 0 : route.length()) + " coordinates");
+        }
+    }
+
+    public static void saveRoutePlan(Context context, String historyId, JSONArray routePlan) {
+        if (historyId == null || historyId.isEmpty()) return;
+        synchronized (LOCK) {
+            write(new File(directory(context, historyId), "route_segments.json"), routePlan == null ? "[]" : routePlan.toString());
+            event(context, historyId, "ROUTE", "Saved " + (routePlan == null ? 0 : routePlan.length()) + " route segments with heading and length data");
         }
     }
 
     public static void event(Context context, String historyId, String category, String message) {
+        if (historyId == null || historyId.isEmpty()) return;
         synchronized (LOCK) {
-            append(new File(directory(context, historyId), "events.log"), TIME.format(new Date()) + " [" + category + "] " + message + "\n");
+            append(new File(directory(context, historyId), "events.log"),
+                    TIME.format(new Date()) + " [" + category + "] " + message + "\n");
         }
     }
 
-    public static void injection(Context context, String historyId, long count, int segment, int totalSegments,
-                                 Location injected, Location androidReported, boolean providerEnabled,
-                                 boolean workerAlive, String phase) {
+    public static void warning(Context context, String historyId, String message) {
+        if (historyId == null || historyId.isEmpty()) return;
+        synchronized (LOCK) {
+            String line = TIME.format(new Date()) + " [WARNING] " + message + "\n";
+            append(new File(directory(context, historyId), "warnings.log"), line);
+            append(new File(directory(context, historyId), "events.log"), line);
+        }
+    }
+
+    public static void injection(Context context, String historyId, JSONObject runtime,
+                                 Location gpsInjected, Location gpsReported,
+                                 Location fusedInjected, Location fusedReported) {
+        if (historyId == null || historyId.isEmpty()) return;
         synchronized (LOCK) {
             try {
-                JSONObject row = new JSONObject()
-                        .put("timestampEpochMs", System.currentTimeMillis())
-                        .put("elapsedRealtimeMs", SystemClock.elapsedRealtime())
-                        .put("count", count)
-                        .put("phase", phase)
-                        .put("segment", segment)
-                        .put("totalSegments", totalSegments)
-                        .put("providerEnabled", providerEnabled)
-                        .put("workerAlive", workerAlive)
-                        .put("injected", locationJson(injected))
-                        .put("androidReported", locationJson(androidReported));
-                if (injected != null && androidReported != null) {
-                    row.put("reportedDistanceFromInjectedMeters", injected.distanceTo(androidReported));
-                    row.put("reportedAgeMs", Math.max(0, System.currentTimeMillis() - androidReported.getTime()));
-                }
+                JSONObject row = runtime == null ? new JSONObject() : new JSONObject(runtime.toString());
+                row.put("timestampEpochMs", System.currentTimeMillis());
+                row.put("elapsedRealtimeMs", SystemClock.elapsedRealtime());
+                row.put("gpsInjected", locationJson(gpsInjected));
+                row.put("gpsReported", locationJson(gpsReported));
+                row.put("fusedInjected", locationJson(fusedInjected));
+                row.put("fusedReported", locationJson(fusedReported));
+                addComparison(row, "gps", gpsInjected, gpsReported);
+                addComparison(row, "fused", fusedInjected, fusedReported);
                 append(new File(directory(context, historyId), "location_updates.jsonl"), row.toString() + "\n");
                 write(new File(directory(context, historyId), "latest_state.json"), row.toString(2));
-            } catch (Exception ignored) {}
+            } catch (Exception e) {
+                append(new File(directory(context, historyId), "logger_errors.log"),
+                        TIME.format(new Date()) + " " + e + "\n");
+            }
+        }
+    }
+
+    private static void addComparison(JSONObject row, String prefix, Location injected, Location reported) throws Exception {
+        if (injected != null && reported != null) {
+            row.put(prefix + "ReportedDistanceFromInjectedMeters", injected.distanceTo(reported));
+            row.put(prefix + "ReportedAgeMs", Math.max(0, System.currentTimeMillis() - reported.getTime()));
+        } else {
+            row.put(prefix + "ReportedDistanceFromInjectedMeters", JSONObject.NULL);
+            row.put(prefix + "ReportedAgeMs", JSONObject.NULL);
         }
     }
 
     public static void exception(Context context, String historyId, String where, Throwable error) {
+        if (historyId == null || historyId.isEmpty()) return;
         synchronized (LOCK) {
             StringWriter stack = new StringWriter();
             error.printStackTrace(new PrintWriter(stack));
@@ -104,10 +135,24 @@ public final class SimulationDiagnostics {
         }
     }
 
+    public static String readLiveState(Context context, String historyId) {
+        if (historyId == null || historyId.isEmpty()) return "";
+        return read(new File(directory(context, historyId), "latest_state.json"));
+    }
+
     public static String summary(Context context, String historyId) {
-        String state = read(new File(directory(context, historyId), "latest_state.json"));
-        String tail = tail(read(new File(directory(context, historyId), "events.log")), 12000);
-        return "Latest runtime state:\n" + (state.isEmpty() ? "Not recorded" : state) + "\n\nRecent events:\n" + tail;
+        if (historyId == null || historyId.isEmpty()) return "No diagnostic session is attached to this simulation.";
+        File dir = directory(context, historyId);
+        String state = read(new File(dir, "latest_state.json"));
+        String warnings = tail(read(new File(dir, "warnings.log")), 6000);
+        String events = tail(read(new File(dir, "events.log")), 16000);
+        String exceptions = tail(read(new File(dir, "exceptions.log")), 8000);
+        StringBuilder out = new StringBuilder();
+        out.append("Latest runtime state:\n").append(state.isEmpty() ? "Not recorded" : state);
+        if (!warnings.isEmpty()) out.append("\n\nWarnings:\n").append(warnings);
+        if (!exceptions.isEmpty()) out.append("\n\nExceptions:\n").append(exceptions);
+        out.append("\n\nRecent events:\n").append(events.isEmpty() ? "Not recorded" : events);
+        return out.toString();
     }
 
     public static File exportZip(Context context, String historyId) throws Exception {
@@ -143,6 +188,7 @@ public final class SimulationDiagnostics {
                 .put("longitude", location.getLongitude())
                 .put("accuracyMeters", location.hasAccuracy() ? location.getAccuracy() : -1)
                 .put("speedMps", location.hasSpeed() ? location.getSpeed() : -1)
+                .put("speedMph", location.hasSpeed() ? location.getSpeed() * 2.2369362920544 : -1)
                 .put("bearingDegrees", location.hasBearing() ? location.getBearing() : -1)
                 .put("timeEpochMs", location.getTime())
                 .put("elapsedRealtimeNanos", location.getElapsedRealtimeNanos())
@@ -150,7 +196,7 @@ public final class SimulationDiagnostics {
     }
 
     private static String pretty(String json) {
-        try { return new JSONObject(json).toString(2); }
+        try { return new JSONObject(json == null ? "{}" : json).toString(2); }
         catch (Exception e) { return json == null ? "" : json; }
     }
 
@@ -168,13 +214,22 @@ public final class SimulationDiagnostics {
     private static String read(File file) {
         if (!file.exists()) return "";
         try (FileInputStream input = new FileInputStream(file)) {
-            byte[] bytes = new byte[(int)Math.min(file.length(), 4_000_000)];
+            byte[] bytes = new byte[(int)Math.min(file.length(), 8_000_000)];
             int read = input.read(bytes);
             return read <= 0 ? "" : new String(bytes, 0, read, java.nio.charset.StandardCharsets.UTF_8);
         } catch (Exception e) { return ""; }
     }
 
-    private static String tail(String value, int max) { return value.length() <= max ? value : value.substring(value.length() - max); }
-    private static String safe(String value) { return value == null || value.isEmpty() ? "unknown" : value.replaceAll("[^a-zA-Z0-9._-]", "_"); }
-    private static void deleteContents(File dir) { File[] files = dir.listFiles(); if (files != null) for (File file : files) if (file.isFile()) file.delete(); }
+    private static String tail(String value, int max) {
+        return value.length() <= max ? value : value.substring(value.length() - max);
+    }
+
+    private static String safe(String value) {
+        return value == null || value.isEmpty() ? "unknown" : value.replaceAll("[^a-zA-Z0-9._-]", "_");
+    }
+
+    private static void deleteContents(File dir) {
+        File[] files = dir.listFiles();
+        if (files != null) for (File file : files) if (file.isFile()) file.delete();
+    }
 }
