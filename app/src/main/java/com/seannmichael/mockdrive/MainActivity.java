@@ -10,11 +10,13 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.InputType;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -25,8 +27,9 @@ import java.text.DateFormat;
 import java.util.Calendar;
 
 public class MainActivity extends Activity {
-    private EditText waypoints, speed, variation, interval, schedule, teleportLat, teleportLon, address, apiToken;
+    private EditText waypoints, speed, variation, interval, schedule, teleportLat, teleportLon, address, apiToken, businessDestination;
     private CheckBox randomStops, holdDestination;
+    private Spinner recurrence, speedProfile;
     private TextView status, queue;
     private long scheduledEpoch;
 
@@ -36,33 +39,40 @@ public class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         int p = dp(16); root.setPadding(p,p,p,p);
-        addLabel(root, "Mock Drive 2", 28);
+        addLabel(root, "Mock Drive 3", 28);
         addLabel(root, "Select this app under Developer options → Select mock location app.", 15);
 
         Button dev = button(root, "Open Developer Options");
         dev.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)));
 
         addLabel(root, "Instant location spoof", 20);
-        address = field(root, "Address to locate", "");
-        button(root, "Find Address").setOnClickListener(v -> geocode());
+        address = field(root, "Address or business name", "");
+        button(root, "Find Location").setOnClickListener(v -> geocodeIntoTeleport());
         teleportLat = field(root, "Latitude", "41.1432");
         teleportLon = field(root, "Longitude", "-81.8552");
         button(root, "Set Location Now").setOnClickListener(v -> teleport());
 
+        addLabel(root, "Google Business destination", 20);
+        addLabel(root, "Enter the exact Google Business Profile name plus city/state or its street address. The resolved coordinates are added as the final destination.", 13);
+        businessDestination = field(root, "Business name and city/state", "");
+        button(root, "Resolve Business as Destination").setOnClickListener(v -> resolveBusinessDestination());
+
         addLabel(root, "Multi-stop road trip", 20);
-        addLabel(root, "One waypoint per line: latitude,longitude,stopSeconds. Include start and destination.", 14);
+        addLabel(root, "One waypoint per line: latitude,longitude,stopSeconds. Include the start and any intermediate stops.", 14);
         waypoints = field(root, "Waypoints", "41.1432,-81.8552,0\n41.1200,-81.7200,60\n41.0814,-81.5190,0");
         waypoints.setMinLines(5);
-        speed = field(root, "Average speed mph", "40");
+        speed = field(root, "Average / maximum speed mph", "40");
         variation = field(root, "Speed variation percent", "8");
         interval = field(root, "GPS update interval ms", "1000");
+        speedProfile = spinner(root, "Speed behavior", new String[]{"Road-aware estimated speeds", "Fixed selected speed", "Urban cautious", "Highway-biased"});
         randomStops = check(root, "Simulate random traffic stops", true);
         holdDestination = check(root, "Hold location at destination", true);
 
-        Button choose = button(root, "Choose Schedule Date/Time");
+        Button choose = button(root, "Choose First Schedule Date/Time");
         choose.setOnClickListener(v -> chooseSchedule());
         schedule = field(root, "Scheduled time", "Start immediately");
         schedule.setFocusable(false);
+        recurrence = spinner(root, "Repeat schedule", new String[]{"None", "Daily", "Weekly", "Monthly"});
 
         button(root, "Start Now").setOnClickListener(v -> startNow());
         button(root, "Save / Queue Trip").setOnClickListener(v -> saveTrip());
@@ -70,12 +80,12 @@ public class MainActivity extends Activity {
         button(root, "Resume").setOnClickListener(v -> command(MockLocationService.ACTION_RESUME));
         button(root, "Stop and Restore Real GPS").setOnClickListener(v -> command(MockLocationService.ACTION_STOP));
 
-        addLabel(root, "Local API", 20);
+        addLabel(root, "Remote API", 20);
         apiToken = field(root, "API token", TripStore.token(this));
         button(root, "Save API Token").setOnClickListener(v -> { TripStore.setToken(this, apiToken.getText().toString().trim()); toast("Token saved"); });
         button(root, "Start API on Port 8765").setOnClickListener(v -> api(true));
         button(root, "Stop API").setOnClickListener(v -> api(false));
-        addLabel(root, "Use Authorization: Bearer <token>. Endpoints: /api/v1/status, /location, /trips and trip start/pause/resume/stop.", 13);
+        addLabel(root, "For access outside the local network, install Tailscale on this phone and the controlling device, then call http://PHONE_TAILSCALE_IP:8765 with Authorization: Bearer <token>. Do not expose port 8765 directly to the public internet.", 13);
 
         addLabel(root, "Trip queue", 20);
         button(root, "Refresh Queue").setOnClickListener(v -> refreshQueue());
@@ -105,12 +115,25 @@ public class MainActivity extends Activity {
         t.put("averageSpeedMph", Double.parseDouble(speed.getText().toString()));
         t.put("speedVariationPercent", Double.parseDouble(variation.getText().toString()));
         t.put("gpsUpdateIntervalMs", Integer.parseInt(interval.getText().toString()));
+        t.put("speedProfile", profileValue());
         t.put("randomStops", randomStops.isChecked());
         t.put("randomStopChancePercent", 2);
         t.put("randomStopMaxSeconds", 20);
         t.put("holdAtDestination", holdDestination.isChecked());
         t.put("startAtEpochMs", scheduledEpoch);
+        t.put("recurrence", recurrenceValue());
+        t.put("destinationBusiness", businessDestination.getText().toString().trim());
         return t;
+    }
+
+    private String recurrenceValue() {
+        int i = recurrence.getSelectedItemPosition();
+        return i == 1 ? "daily" : i == 2 ? "weekly" : i == 3 ? "monthly" : "none";
+    }
+
+    private String profileValue() {
+        int i = speedProfile.getSelectedItemPosition();
+        return i == 0 ? "road_aware" : i == 2 ? "urban" : i == 3 ? "highway" : "fixed";
     }
 
     private void startNow() {
@@ -126,7 +149,7 @@ public class MainActivity extends Activity {
         try {
             JSONObject t = buildTrip();
             if (scheduledEpoch > 0) TripScheduler.schedule(this, t); else TripStore.save(this, t);
-            status.setText(scheduledEpoch > 0 ? "Trip scheduled." : "Trip queued.");
+            status.setText(scheduledEpoch > 0 ? "Trip scheduled with recurrence: " + recurrenceValue() : "Trip queued.");
             refreshQueue();
         } catch (Exception e) { toast(e.getMessage()); }
     }
@@ -141,30 +164,37 @@ public class MainActivity extends Activity {
         } catch (Exception e) { toast("Enter valid coordinates"); }
     }
 
-    private void geocode() {
-        String q = address.getText().toString().trim();
+    private void geocodeIntoTeleport() { geocode(address.getText().toString().trim(), false); }
+    private void resolveBusinessDestination() { geocode(businessDestination.getText().toString().trim(), true); }
+
+    private void geocode(String q, boolean appendDestination) {
         if (q.isEmpty()) return;
-        status.setText("Finding address…");
+        status.setText("Finding location…");
         new Thread(() -> {
             try {
                 JSONObject p = RouteEngine.geocode(q);
                 runOnUiThread(() -> {
-                    teleportLat.setText(String.valueOf(p.optDouble("latitude")));
-                    teleportLon.setText(String.valueOf(p.optDouble("longitude")));
-                    status.setText(p.optString("label"));
+                    if (appendDestination) {
+                        String existing = waypoints.getText().toString().trim();
+                        String line = p.optDouble("latitude") + "," + p.optDouble("longitude") + ",0";
+                        waypoints.setText(existing.isEmpty() ? line : existing + "\n" + line);
+                        status.setText("Business destination added: " + p.optString("label"));
+                    } else {
+                        teleportLat.setText(String.valueOf(p.optDouble("latitude")));
+                        teleportLon.setText(String.valueOf(p.optDouble("longitude")));
+                        status.setText(p.optString("label"));
+                    }
                 });
-            } catch (Exception e) { runOnUiThread(() -> status.setText("Address lookup failed: " + e.getMessage())); }
+            } catch (Exception e) { runOnUiThread(() -> status.setText("Location lookup failed: " + e.getMessage())); }
         }).start();
     }
 
     private void chooseSchedule() {
         Calendar c = Calendar.getInstance();
-        new DatePickerDialog(this, (d,y,m,day) -> {
-            new TimePickerDialog(this, (t,h,min) -> {
-                Calendar x = Calendar.getInstance(); x.set(y,m,day,h,min,0); scheduledEpoch = x.getTimeInMillis();
-                schedule.setText(DateFormat.getDateTimeInstance().format(scheduledEpoch));
-            }, c.get(Calendar.HOUR_OF_DAY), c.get(Calendar.MINUTE), false).show();
-        }, c.get(Calendar.YEAR), c.get(Calendar.MONTH), c.get(Calendar.DAY_OF_MONTH)).show();
+        new DatePickerDialog(this, (d,y,m,day) -> new TimePickerDialog(this, (t,h,min) -> {
+            Calendar x = Calendar.getInstance(); x.set(y,m,day,h,min,0); scheduledEpoch = x.getTimeInMillis();
+            schedule.setText(DateFormat.getDateTimeInstance().format(scheduledEpoch));
+        }, c.get(Calendar.HOUR_OF_DAY), c.get(Calendar.MINUTE), false).show(), c.get(Calendar.YEAR), c.get(Calendar.MONTH), c.get(Calendar.DAY_OF_MONTH)).show();
     }
 
     private void command(String action) { startService(new Intent(this, MockLocationService.class).setAction(action)); }
@@ -173,11 +203,11 @@ public class MainActivity extends Activity {
         if (start && Build.VERSION.SDK_INT >= 26) startForegroundService(i); else startService(i);
         status.setText(start ? "API running on port 8765" : "API stopped");
     }
-    private void refreshQueue() {
-        try { queue.setText(TripStore.all(this).toString(2)); }
-        catch (Exception e) { queue.setText(TripStore.all(this).toString()); }
-    }
+    private void refreshQueue() { try { queue.setText(TripStore.all(this).toString(2)); } catch (Exception e) { queue.setText(TripStore.all(this).toString()); } }
 
+    private Spinner spinner(LinearLayout p, String label, String[] values) {
+        addLabel(p, label, 14); Spinner s = new Spinner(this); s.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, values)); p.addView(s); return s;
+    }
     private EditText field(LinearLayout p, String hint, String value) {
         EditText e = new EditText(this); e.setHint(hint); e.setText(value); e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         p.addView(e, new LinearLayout.LayoutParams(-1,-2)); return e;
