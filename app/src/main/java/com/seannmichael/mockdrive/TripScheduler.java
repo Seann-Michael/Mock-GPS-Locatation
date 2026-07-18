@@ -1,0 +1,57 @@
+package com.seannmichael.mockdrive;
+
+import android.app.AlarmManager;
+import android.app.PendingIntent;
+import android.content.Context;
+import android.content.Intent;
+import android.os.Build;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+public final class TripScheduler {
+    private TripScheduler() {}
+
+    public static void schedule(Context context, JSONObject trip) throws Exception {
+        TripStore.save(context, trip);
+        long when = trip.optLong("startAtEpochMs", 0);
+        if (when <= 0) return;
+        Intent i = new Intent(context, TripAlarmReceiver.class);
+        i.putExtra("trip_id", trip.getString("id"));
+        PendingIntent pi = PendingIntent.getBroadcast(context, requestCode(trip.getString("id")), i, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        if (Build.VERSION.SDK_INT >= 23) am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, when, pi);
+        else am.setExact(AlarmManager.RTC_WAKEUP, when, pi);
+        TripStore.updateStatus(context, trip.getString("id"), "scheduled");
+    }
+
+    public static void cancel(Context context, String id) {
+        Intent i = new Intent(context, TripAlarmReceiver.class);
+        PendingIntent pi = PendingIntent.getBroadcast(context, requestCode(id), i, PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE);
+        if (pi != null) {
+            ((AlarmManager) context.getSystemService(Context.ALARM_SERVICE)).cancel(pi);
+            pi.cancel();
+        }
+    }
+
+    public static void restore(Context context) {
+        JSONArray all = TripStore.all(context);
+        long now = System.currentTimeMillis();
+        for (int n = 0; n < all.length(); n++) {
+            try {
+                JSONObject t = all.getJSONObject(n);
+                long when = t.optLong("startAtEpochMs", 0);
+                if (when > now && "scheduled".equals(t.optString("status"))) schedule(context, t);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    static void launch(Context context, JSONObject trip) {
+        Intent s = new Intent(context, MockLocationService.class);
+        s.setAction(MockLocationService.ACTION_START);
+        s.putExtra(MockLocationService.EXTRA_TRIP, trip.toString());
+        if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(s); else context.startService(s);
+    }
+
+    private static int requestCode(String id) { return id.hashCode() & 0x7fffffff; }
+}
