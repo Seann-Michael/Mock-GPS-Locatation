@@ -22,32 +22,35 @@ public class StandbyActivity extends Activity {
         LinearLayout root = UiKit.page(this);
         UiKit.topBar(this, root, "Mock Drive", false);
 
-        LinearLayout hero = UiKit.card(this, root);
-        hero.addView(UiKit.text(this, "Drive from A to B", 25, true));
-        hero.addView(UiKit.text(this, "Set a mock starting location, choose a destination, open Google Maps, and simulate the drive along real roads.", 15, false));
-        deviceStatus = UiKit.text(this, "Checking setup…", 15, true);
+        LinearLayout hero = UiKit.hero(this, root);
+        hero.addView(UiKit.whiteText(this, "Drive from A to B", 28, true));
+        hero.addView(UiKit.whiteText(this, "Set a mock starting point, launch Google Maps, and simulate movement along real roads.", 15, false));
+        deviceStatus = UiKit.whiteText(this, "Checking device setup…", 14, true);
         hero.addView(deviceStatus);
 
         LinearLayout primary = UiKit.card(this, root);
-        primary.addView(UiKit.text(this, "Start here", 20, true));
-        Button drive = UiKit.button(this, "Set A and B and start navigation");
+        primary.addView(UiKit.text(this, "Start a drive", 21, true));
+        primary.addView(UiKit.text(this, "Enter location A and destination B", 14, false));
+        Button drive = UiKit.button(this, "Open A to B navigation");
         primary.addView(drive);
         drive.setOnClickListener(v -> startActivity(new Intent(this, SimpleDriveActivity.class)));
 
-        Button mock = UiKit.secondaryButton(this, "Set a stationary mock location");
-        primary.addView(mock);
+        LinearLayout quick = UiKit.card(this, root);
+        quick.addView(UiKit.text(this, "Quick mock", 20, true));
+        quick.addView(UiKit.text(this, "Place the phone at one fixed location without starting a drive", 14, false));
+        Button mock = UiKit.secondaryButton(this, "Set stationary location");
+        quick.addView(mock);
         mock.setOnClickListener(v -> startActivity(new Intent(this, QuickMockActivity.class)));
 
         LinearLayout controls = UiKit.card(this, root);
-        controls.addView(UiKit.text(this, "Controls", 19, true));
+        controls.addView(UiKit.text(this, "GPS controls", 20, true));
         Button stop = UiKit.secondaryButton(this, "Stop simulation and restore real GPS");
         controls.addView(stop);
         stop.setOnClickListener(v -> startService(new Intent(this, MockLocationService.class).setAction(MockLocationService.ACTION_STOP)));
-        Button settings = UiKit.secondaryButton(this, "Settings and diagnostics");
-        controls.addView(settings);
-        settings.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
 
+        UiKit.bottomNav(this, root, "Home");
         ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
         scroll.addView(root);
         setContentView(scroll);
     }
@@ -68,7 +71,7 @@ public class StandbyActivity extends Activity {
 
     private void refresh() {
         boolean locationGranted = Build.VERSION.SDK_INT < 23 || checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
-        deviceStatus.setText("Location permission: " + (locationGranted ? "Granted" : "Required") +
-                "\nMock provider: select Mock Drive in Developer Options");
+        deviceStatus.setText((locationGranted ? "✓ Location permission granted" : "! Location permission required") +
+                "\nSelect Mock Drive in Developer Options");
     }
 }
