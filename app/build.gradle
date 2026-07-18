@@ -2,6 +2,12 @@ plugins {
     id 'com.android.application'
 }
 
+def ciRun = System.getenv('GITHUB_RUN_NUMBER')
+def releaseStore = System.getenv('ANDROID_KEYSTORE_PATH')
+def releaseStorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+def releaseKeyAlias = System.getenv('ANDROID_KEY_ALIAS')
+def releaseKeyPassword = System.getenv('ANDROID_KEY_PASSWORD')
+
 android {
     namespace 'com.seannmichael.mockdrive'
     compileSdk 35
@@ -10,14 +16,28 @@ android {
         applicationId 'com.seannmichael.mockdrive'
         minSdk 26
         targetSdk 35
-        versionCode 2
-        versionName '1.1-diagnostics'
+        versionCode ciRun ? (1000 + Integer.parseInt(ciRun)) : 3
+        versionName ciRun ? "1.2.${ciRun}" : '1.2-local'
+    }
+
+    signingConfigs {
+        if (releaseStore && releaseStorePassword && releaseKeyAlias && releaseKeyPassword) {
+            releasePermanent {
+                storeFile file(releaseStore)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
     }
 
     buildTypes {
+        debug {
+            if (signingConfigs.findByName('releasePermanent') != null) signingConfig signingConfigs.releasePermanent
+        }
         release {
             minifyEnabled false
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.findByName('releasePermanent') ?: signingConfigs.debug
         }
     }
 }
