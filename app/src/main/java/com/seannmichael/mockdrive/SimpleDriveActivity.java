@@ -23,34 +23,38 @@ public class SimpleDriveActivity extends Activity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         LinearLayout root = UiKit.page(this);
-        UiKit.topBar(this, root, "Drive A to B", true);
+        UiKit.topBar(this, root, "Drive", true);
 
-        LinearLayout intro = UiKit.card(this, root);
-        intro.addView(UiKit.text(this, "Simple mock navigation", 22, true));
-        intro.addView(UiKit.text(this, "Set the phone at location A, open Google Maps to destination B, and move the GPS along actual roads.", 14, false));
+        LinearLayout hero = UiKit.hero(this, root);
+        hero.addView(UiKit.whiteText(this, "Mock navigation", 27, true));
+        hero.addView(UiKit.whiteText(this, "Choose a starting point and destination. Mock Drive will open Google Maps and move the phone along real roads.", 15, false));
 
         LinearLayout startCard = UiKit.card(this, root);
-        startCard.addView(UiKit.text(this, "Starting location A", 19, true));
-        startAddress = UiKit.field(this, "Starting address", ""); startCard.addView(startAddress);
+        startCard.addView(UiKit.text(this, "A  Starting location", 20, true));
+        startCard.addView(UiKit.text(this, "Where the phone should appear before navigation begins", 13, false));
+        startAddress = UiKit.field(this, "Search starting address", ""); startCard.addView(startAddress);
         Button findStart = UiKit.secondaryButton(this, "Find starting address"); startCard.addView(findStart);
-        startLat = UiKit.field(this, "Starting latitude", "41.181097"); startCard.addView(startLat);
-        startLon = UiKit.field(this, "Starting longitude", "-81.974890"); startCard.addView(startLon);
+        startLat = UiKit.field(this, "Latitude", "41.181097"); startCard.addView(startLat);
+        startLon = UiKit.field(this, "Longitude", "-81.974890"); startCard.addView(startLon);
         findStart.setOnClickListener(v -> geocode(startAddress.getText().toString(), startLat, startLon, "Start"));
 
         LinearLayout destinationCard = UiKit.card(this, root);
-        destinationCard.addView(UiKit.text(this, "Destination B", 19, true));
-        destinationAddress = UiKit.field(this, "Destination address", ""); destinationCard.addView(destinationAddress);
+        destinationCard.addView(UiKit.text(this, "B  Destination", 20, true));
+        destinationCard.addView(UiKit.text(this, "Where Google Maps should navigate", 13, false));
+        destinationAddress = UiKit.field(this, "Search destination address", ""); destinationCard.addView(destinationAddress);
         Button findDestination = UiKit.secondaryButton(this, "Find destination address"); destinationCard.addView(findDestination);
-        destinationLat = UiKit.field(this, "Destination latitude", ""); destinationCard.addView(destinationLat);
-        destinationLon = UiKit.field(this, "Destination longitude", ""); destinationCard.addView(destinationLon);
+        destinationLat = UiKit.field(this, "Latitude", ""); destinationCard.addView(destinationLat);
+        destinationLon = UiKit.field(this, "Longitude", ""); destinationCard.addView(destinationLon);
         findDestination.setOnClickListener(v -> geocode(destinationAddress.getText().toString(), destinationLat, destinationLon, "Destination"));
 
         LinearLayout driveCard = UiKit.card(this, root);
-        driveCard.addView(UiKit.text(this, "Drive settings", 19, true));
-        speed = UiKit.field(this, "Average speed mph", "35"); driveCard.addView(speed);
-        Button start = UiKit.button(this, "Start navigation"); driveCard.addView(start);
-        Button stop = UiKit.secondaryButton(this, "Stop simulation and restore real GPS"); driveCard.addView(stop);
-        status = UiKit.text(this, "Ready", 15, true); driveCard.addView(status);
+        driveCard.addView(UiKit.text(this, "Drive settings", 20, true));
+        speed = UiKit.field(this, "Average speed in mph", "35"); driveCard.addView(speed);
+        Button start = UiKit.button(this, "Start Google Maps navigation"); driveCard.addView(start);
+        Button stop = UiKit.secondaryButton(this, "Stop and restore real GPS"); driveCard.addView(stop);
+        status = UiKit.text(this, "Ready to begin", 15, true);
+        status.setTextColor(UiKit.BLUE_DARK);
+        driveCard.addView(status);
 
         start.setOnClickListener(v -> startNavigation());
         stop.setOnClickListener(v -> {
@@ -58,8 +62,11 @@ public class SimpleDriveActivity extends Activity {
             status.setText("Simulation stopped. Real GPS restored.");
         });
 
-        UiKit.bottomNav(this, root, "Home");
-        ScrollView scroll = new ScrollView(this); scroll.addView(root); setContentView(scroll);
+        UiKit.bottomNav(this, root, "Drive");
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.addView(root);
+        setContentView(scroll);
     }
 
     private void geocode(String query, EditText latField, EditText lonField, String label) {
@@ -92,7 +99,7 @@ public class SimpleDriveActivity extends Activity {
                     .putExtra(MockLocationService.EXTRA_LAT, aLat)
                     .putExtra(MockLocationService.EXTRA_LON, aLon);
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(hold); else startService(hold);
-            status.setText("Mock GPS set to A. Preparing road route…");
+            status.setText("Location A set. Preparing road route…");
 
             JSONArray waypoints = new JSONArray()
                     .put(new JSONObject().put("latitude", aLat).put("longitude", aLon).put("stopSeconds", 0))
@@ -118,7 +125,7 @@ public class SimpleDriveActivity extends Activity {
                     maps.setPackage("com.google.android.apps.maps");
                     try { startActivity(maps); } catch (Exception e) { maps.setPackage(null); startActivity(maps); }
                     TripScheduler.launch(this, saved);
-                    status.setText("Navigation started. Mock GPS is moving from A to B.");
+                    status.setText("Navigation active. GPS is moving from A to B.");
                 } catch (Exception e) {
                     status.setText("Could not start navigation: " + e.getMessage());
                 }
