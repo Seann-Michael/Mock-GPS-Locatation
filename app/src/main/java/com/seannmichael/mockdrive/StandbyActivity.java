@@ -8,7 +8,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.widget.Button;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.util.ArrayList;
@@ -48,17 +47,10 @@ public class StandbyActivity extends Activity {
         controls.addView(stop);
         stop.setOnClickListener(v -> startService(new Intent(this, MockLocationService.class).setAction(MockLocationService.ACTION_STOP)));
 
-        UiKit.bottomNav(this, root, "Home");
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.addView(root);
-        setContentView(scroll);
+        UiKit.setStickyScreen(this,root,"Home");
     }
 
-    @Override protected void onResume() {
-        super.onResume();
-        refresh();
-    }
+    @Override protected void onResume() {super.onResume();refresh();}
 
     private void requestPermissionsIfNeeded() {
         if (Build.VERSION.SDK_INT < 23) return;
@@ -71,7 +63,6 @@ public class StandbyActivity extends Activity {
 
     private void refresh() {
         boolean locationGranted = Build.VERSION.SDK_INT < 23 || checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
-        deviceStatus.setText((locationGranted ? "✓ Location permission granted" : "! Location permission required") +
-                "\nSelect Mock Drive in Developer Options");
+        deviceStatus.setText((locationGranted ? "✓ Location permission granted" : "! Location permission required") + "\nSelect Mock Drive in Developer Options");
     }
 }
