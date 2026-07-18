@@ -22,7 +22,7 @@ public class DiagnosticsActivity extends Activity {
         text(root,"GPS provider enabled: "+lm.isProviderEnabled(LocationManager.GPS_PROVIDER),14);
         String api=AppPreferences.apiKey(this);
         text(root,"API key: "+(api!=null&&!api.startsWith("revoked-")?"Active":"Revoked / missing"),14);
-        text(root,"Google Places key: "+(!GoogleBusinessResolver.apiKey(this).isEmpty()?"Configured":"Missing"),14);
+        text(root,"Google Places key: "+(!GooglePlacesEngine.getApiKey(this).isEmpty()?"Configured":"Missing"),14);
         text(root,"License key: "+(!AppPreferences.licenseKey(this).isEmpty()?"Stored but unverified":"Missing"),14);
         text(root,"Queued trips: "+TripStore.all(this).length(),14);
         text(root,"Remote API port: 8765\nUse a private VPN such as Tailscale for remote access.",14);
