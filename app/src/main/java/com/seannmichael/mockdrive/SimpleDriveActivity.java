@@ -1,5 +1,6 @@
 package com.seannmichael.mockdrive;
 
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
@@ -7,6 +8,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.text.Editable;
 import android.text.TextWatcher;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.AutoCompleteTextView;
 import android.widget.Button;
 import android.widget.EditText;
@@ -88,7 +90,13 @@ public class SimpleDriveActivity extends BaseActivity {
         final PlacesSuggestionAdapter adapter=new PlacesSuggestionAdapter(this,labels);
         input.setAdapter(adapter);
         input.setOnFocusChangeListener((view,hasFocus)->{
-            if(hasFocus&&adapter.getCount()>0)input.postDelayed(input::showDropDown,150);
+            if(hasFocus){
+                input.postDelayed(()->{
+                    InputMethodManager keyboard=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
+                    if(keyboard!=null)keyboard.showSoftInput(input,InputMethodManager.SHOW_IMPLICIT);
+                    if(adapter.getCount()>0)input.showDropDown();
+                },120);
+            }
         });
         input.setOnItemClickListener((parent,view,position,id)->{
             if(position<0||position>=ids.size())return;
@@ -114,7 +122,7 @@ public class SimpleDriveActivity extends BaseActivity {
                     runOnUiThread(()->{
                         if(!q.equals(input.getText().toString().trim()))return;
                         labels.clear();labels.addAll(nextLabels);ids.clear();ids.addAll(nextIds);adapter.notifyDataSetChanged();
-                        if(input.hasFocus()&&!labels.isEmpty()){input.showDropDown();}
+                        if(input.hasFocus()&&!labels.isEmpty())input.showDropDown();
                         if(labels.isEmpty())status.setText("No Google Places matches found.");
                     });
                 }catch(Exception e){runOnUiThread(()->status.setText(friendlyPlacesError(e)));}},"places-autocomplete").start();
