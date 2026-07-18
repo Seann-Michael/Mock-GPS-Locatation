@@ -1,6 +1,5 @@
 package com.seannmichael.mockdrive;
 
-import android.app.Activity;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
@@ -8,7 +7,6 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.text.Editable;
 import android.text.TextWatcher;
-import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
 import android.widget.Button;
 import android.widget.EditText;
@@ -22,7 +20,7 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 
-public class SimpleDriveActivity extends Activity {
+public class SimpleDriveActivity extends BaseActivity {
     private AutoCompleteTextView startAddress,destinationAddress;
     private EditText startLat,startLon,destinationLat,destinationLon;
     private TextView status,speedValue;
@@ -36,6 +34,9 @@ public class SimpleDriveActivity extends Activity {
         LinearLayout hero=UiKit.hero(this,root);
         hero.addView(UiKit.whiteText(this,"Mock navigation",27,true));
         hero.addView(UiKit.whiteText(this,"Type an address or business, choose a suggestion, then start the drive.",15,false));
+
+        status=UiKit.text(this,"Ready to begin",15,true);
+        status.setTextColor(UiKit.BLUE_DARK);
 
         LinearLayout startCard=UiKit.card(this,root);
         startCard.addView(UiKit.text(this,"A  Starting location",20,true));
@@ -72,7 +73,7 @@ public class SimpleDriveActivity extends Activity {
         Button pause=UiKit.secondaryButton(this,"Pause drive");actionCard.addView(pause);
         Button resume=UiKit.secondaryButton(this,"Resume drive");actionCard.addView(resume);
         Button stop=UiKit.secondaryButton(this,"Stop and restore real GPS");actionCard.addView(stop);
-        status=UiKit.text(this,"Ready to begin",15,true);status.setTextColor(UiKit.BLUE_DARK);actionCard.addView(status);
+        actionCard.addView(status);
         start.setOnClickListener(v->startNavigation());
         pause.setOnClickListener(v->{startService(new Intent(this,MockLocationService.class).setAction(MockLocationService.ACTION_PAUSE));status.setText("Drive paused.");});
         resume.setOnClickListener(v->{startService(new Intent(this,MockLocationService.class).setAction(MockLocationService.ACTION_RESUME));status.setText("Drive resumed at "+selectedSpeed+" mph.");});
@@ -84,16 +85,20 @@ public class SimpleDriveActivity extends Activity {
     private void setupAutocomplete(AutoCompleteTextView input,EditText lat,EditText lon,String label){
         final ArrayList<String> labels=new ArrayList<>();
         final ArrayList<String> ids=new ArrayList<>();
-        final ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_dropdown_item_1line,labels);
+        final PlacesSuggestionAdapter adapter=new PlacesSuggestionAdapter(this,labels);
         input.setAdapter(adapter);
+        input.setOnFocusChangeListener((view,hasFocus)->{
+            if(hasFocus&&adapter.getCount()>0)input.postDelayed(input::showDropDown,150);
+        });
         input.setOnItemClickListener((parent,view,position,id)->{
             if(position<0||position>=ids.size())return;
             String placeId=ids.get(position);status.setText("Loading "+label.toLowerCase()+" details…");
             new Thread(()->{try{JSONObject place=GooglePlacesEngine.placeDetails(this,placeId);runOnUiThread(()->{
                 input.setText(place.optString("formattedAddress",place.optString("label","")),false);
                 lat.setText(String.valueOf(place.optDouble("latitude")));lon.setText(String.valueOf(place.optDouble("longitude")));
+                input.dismissDropDown();
                 status.setText(label+" selected: "+place.optString("label"));
-            });}catch(Exception e){runOnUiThread(()->status.setText("Could not load place: "+e.getMessage()));}},"place-details").start();
+            });}catch(Exception e){runOnUiThread(()->status.setText("Could not load place: "+friendlyPlacesError(e)));}},"place-details").start();
         });
         input.addTextChangedListener(new TextWatcher(){
             Runnable pending;
@@ -101,12 +106,29 @@ public class SimpleDriveActivity extends Activity {
             @Override public void onTextChanged(CharSequence s,int st,int before,int count){
                 if(pending!=null)searchHandler.removeCallbacks(pending);
                 String q=s==null?"":s.toString().trim();
-                if(q.length()<2){labels.clear();ids.clear();adapter.notifyDataSetChanged();return;}
-                pending=()->new Thread(()->{try{JSONArray results=GooglePlacesEngine.autocomplete(SimpleDriveActivity.this,q);ArrayList<String> nextLabels=new ArrayList<>();ArrayList<String> nextIds=new ArrayList<>();for(int i=0;i<results.length();i++){JSONObject r=results.optJSONObject(i);if(r!=null){nextLabels.add(r.optString("label"));nextIds.add(r.optString("placeId"));}}runOnUiThread(()->{labels.clear();labels.addAll(nextLabels);ids.clear();ids.addAll(nextIds);adapter.notifyDataSetChanged();if(input.hasFocus()&&!labels.isEmpty())input.showDropDown();});}catch(Exception e){runOnUiThread(()->status.setText(e.getMessage()));}},"places-autocomplete").start();
-                searchHandler.postDelayed(pending,350);
+                if(q.length()<2){labels.clear();ids.clear();adapter.notifyDataSetChanged();input.dismissDropDown();return;}
+                pending=()->new Thread(()->{try{
+                    JSONArray results=GooglePlacesEngine.autocomplete(SimpleDriveActivity.this,q);
+                    ArrayList<String> nextLabels=new ArrayList<>();ArrayList<String> nextIds=new ArrayList<>();
+                    for(int i=0;i<results.length();i++){JSONObject r=results.optJSONObject(i);if(r!=null){nextLabels.add(r.optString("label"));nextIds.add(r.optString("placeId"));}}
+                    runOnUiThread(()->{
+                        if(!q.equals(input.getText().toString().trim()))return;
+                        labels.clear();labels.addAll(nextLabels);ids.clear();ids.addAll(nextIds);adapter.notifyDataSetChanged();
+                        if(input.hasFocus()&&!labels.isEmpty()){input.showDropDown();}
+                        if(labels.isEmpty())status.setText("No Google Places matches found.");
+                    });
+                }catch(Exception e){runOnUiThread(()->status.setText(friendlyPlacesError(e)));}},"places-autocomplete").start();
+                searchHandler.postDelayed(pending,450);
             }
             @Override public void afterTextChanged(Editable s){}
         });
+    }
+
+    private String friendlyPlacesError(Exception e){
+        String message=e.getMessage()==null?"Google Places request failed":e.getMessage();
+        if(message.contains("API key"))return "Add your Google Places API key in Settings → API and access.";
+        if(message.contains("403"))return "Google Places denied the request. Check that Places API (New), billing, and key restrictions are enabled.";
+        return message;
     }
 
     private void startNavigation(){
