@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 jobs:
   build:
@@ -50,15 +51,42 @@ jobs:
             echo "WARNING: Permanent signing secrets are not configured. This build cannot update a differently signed installation."
           fi
 
-      - name: Build debug APK
+      - name: Build debug APK and capture compiler output
+        id: gradle_build
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          /tmp/gradle-8.9/bin/gradle :app:assembleDebug --stacktrace 2>&1 | tee gradle-build.log
+          BUILD_STATUS=${PIPESTATUS[0]}
+          echo "exit_code=${BUILD_STATUS}" >> "$GITHUB_OUTPUT"
+          if [ "${BUILD_STATUS}" -eq 0 ]; then
+            cp app/build/outputs/apk/debug/app-debug.apk MockDrive.apk
+            test -s MockDrive.apk
+          fi
+          exit 0
+
+      - name: Report exact build failure
+        if: steps.gradle_build.outputs.exit_code != '0'
         shell: bash
         run: |
           set -euo pipefail
-          /tmp/gradle-8.9/bin/gradle :app:assembleDebug --stacktrace
-          cp app/build/outputs/apk/debug/app-debug.apk MockDrive.apk
-          test -s MockDrive.apk
+          tail -n 220 gradle-build.log > gradle-failure-tail.txt
+          {
+            echo "Android build failed for commit \`${GITHUB_SHA}\` in workflow run #${GITHUB_RUN_NUMBER}."
+            echo
+            echo '```text'
+            cat gradle-failure-tail.txt
+            echo '```'
+          } > issue-body.md
+          gh issue create \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Android CI failure #${GITHUB_RUN_NUMBER}" \
+            --body-file issue-body.md
+          exit 1
 
       - name: Create updater metadata
+        if: steps.gradle_build.outputs.exit_code == '0'
         shell: bash
         run: |
           set -euo pipefail
@@ -84,6 +112,7 @@ jobs:
           cat update.json
 
       - name: Upload APK artifact
+        if: steps.gradle_build.outputs.exit_code == '0'
         uses: actions/upload-artifact@v4
         with:
           name: MockDrive-APK
@@ -94,6 +123,7 @@ jobs:
           retention-days: 30
 
       - name: Publish installable APK release
+        if: steps.gradle_build.outputs.exit_code == '0'
         shell: bash
         run: |
           set -euo pipefail
