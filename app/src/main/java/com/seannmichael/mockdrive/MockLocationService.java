@@ -39,6 +39,7 @@ public class MockLocationService extends Service {
     private LocationManager manager;
     private Point heldPoint;
     private PowerManager.WakeLock wakeLock;
+    private volatile String lastNoticeText;
 
     @Override public void onCreate(){
         super.onCreate();
@@ -223,15 +224,27 @@ public class MockLocationService extends Service {
     }
 
     private void enableProvider(){
-        try{manager.removeTestProvider(LocationManager.GPS_PROVIDER);}catch(Exception ignored){}
+        enableSingleProvider(LocationManager.GPS_PROVIDER);
+        // The network provider (and the fused provider that reads from it) is a best-effort bonus so
+        // apps that don't request GPS directly still see the mock. It must never break the GPS path.
+        try{enableSingleProvider(LocationManager.NETWORK_PROVIDER);}catch(Exception ignored){}
+    }
+
+    private void enableSingleProvider(String provider){
+        try{manager.removeTestProvider(provider);}catch(Exception ignored){}
         try{
-            manager.addTestProvider(LocationManager.GPS_PROVIDER,false,false,false,false,true,true,true,Criteria.POWER_LOW,Criteria.ACCURACY_FINE);
+            manager.addTestProvider(provider,false,false,false,false,true,true,true,Criteria.POWER_LOW,Criteria.ACCURACY_FINE);
         }catch(IllegalArgumentException ignored){}
-        manager.setTestProviderEnabled(LocationManager.GPS_PROVIDER,true);
+        manager.setTestProviderEnabled(provider,true);
     }
 
     private void inject(Point p,float bearing,float speed,float accuracy){
-        Location l=new Location(LocationManager.GPS_PROVIDER);
+        setProviderLocation(LocationManager.GPS_PROVIDER,p,bearing,speed,accuracy);
+        try{setProviderLocation(LocationManager.NETWORK_PROVIDER,p,bearing,speed,accuracy);}catch(Exception ignored){}
+    }
+
+    private void setProviderLocation(String provider,Point p,float bearing,float speed,float accuracy){
+        Location l=new Location(provider);
         l.setLatitude(p.lat);
         l.setLongitude(p.lon);
         l.setAccuracy(accuracy);
@@ -245,13 +258,14 @@ public class MockLocationService extends Service {
             l.setSpeedAccuracyMetersPerSecond(0.5f);
             l.setVerticalAccuracyMeters(accuracy);
         }
-        manager.setTestProviderLocation(LocationManager.GPS_PROVIDER,l);
+        manager.setTestProviderLocation(provider,l);
     }
 
     private void stopEverything(){
         getSharedPreferences(PREFS,MODE_PRIVATE).edit().remove(KEY_ACTIVE_TRIP).apply();
         stopWorker();
         try{manager.removeTestProvider(LocationManager.GPS_PROVIDER);}catch(Exception ignored){}
+        try{manager.removeTestProvider(LocationManager.NETWORK_PROVIDER);}catch(Exception ignored){}
         releaseWakeLock();
         stopForeground(true);
         stopSelf();
@@ -284,7 +298,13 @@ public class MockLocationService extends Service {
         return b.setContentTitle("Mock Drive").setContentText(text).setSmallIcon(android.R.drawable.ic_menu_mylocation).setOngoing(true).setContentIntent(pi).build();
     }
 
-    private void updateNotice(String text){((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(NOTICE,notice(text));}
+    private void updateNotice(String text){
+        // The drive loop calls this every GPS tick; skip redundant posts so we don't spam the
+        // notification manager (which rate-limits and wastes battery) when the text hasn't changed.
+        if(text!=null&&text.equals(lastNoticeText))return;
+        lastNoticeText=text;
+        ((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(NOTICE,notice(text));
+    }
     private static double clamp(double v,double min,double max){return Math.max(min,Math.min(max,v));}
     private static double distance(Point a,Point b){double earth=6371000,p1=Math.toRadians(a.lat),p2=Math.toRadians(b.lat),dp=Math.toRadians(b.lat-a.lat),dl=Math.toRadians(b.lon-a.lon);double h=Math.sin(dp/2)*Math.sin(dp/2)+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)*Math.sin(dl/2);return earth*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h));}
     private static Point interpolate(Point a,Point b,double f){return new Point(a.lat+(b.lat-a.lat)*f,a.lon+(b.lon-a.lon)*f);}

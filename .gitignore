@@ -1,0 +1,12 @@
+# Android / Gradle build output
+.gradle/
+build/
+app/build/
+
+# Local SDK configuration (machine-specific)
+local.properties
+
+# Android Studio / IDE
+.idea/
+*.iml
+.DS_Store

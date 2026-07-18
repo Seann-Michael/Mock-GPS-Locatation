@@ -25,7 +25,7 @@ public class DiagnosticsActivity extends Activity {
         text(root,"Google Places key: "+(!GooglePlacesEngine.getApiKey(this).isEmpty()?"Configured":"Missing"),14);
         text(root,"License key: "+(!AppPreferences.licenseKey(this).isEmpty()?"Stored but unverified":"Missing"),14);
         text(root,"Queued trips: "+TripStore.all(this).length(),14);
-        text(root,"Remote API port: 8765\nUse a private VPN such as Tailscale for remote access.",14);
+        text(root,"Remote control API: "+(AppPreferences.apiEnabled(this)?"Running":"Stopped")+" (port "+ApiService.PORT+")\nRestart after reboot: "+(AppPreferences.apiAutoStart(this)?"On":"Off")+"\nUse a private VPN such as Tailscale for remote access.",14);
         setContentView(root);
     }
     private TextView text(LinearLayout p,String s,int z){TextView v=new TextView(this);v.setText(s);v.setTextSize(z);v.setPadding(0,dp(8),0,dp(5));p.addView(v);return v;}

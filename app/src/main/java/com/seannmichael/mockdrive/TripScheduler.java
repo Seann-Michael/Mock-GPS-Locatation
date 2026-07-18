@@ -22,8 +22,16 @@ public final class TripScheduler {
         i.putExtra("trip_id", trip.getString("id"));
         PendingIntent pi = PendingIntent.getBroadcast(context, requestCode(trip.getString("id")), i, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-        if (Build.VERSION.SDK_INT >= 23) am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, when, pi);
-        else am.setExact(AlarmManager.RTC_WAKEUP, when, pi);
+        // On Android 12+ exact alarms require a special permission that is not granted by default
+        // (and is fully denied for most apps on Android 14+). Fall back to an inexact alarm instead
+        // of crashing with SecurityException so scheduling always works; exact timing is best-effort.
+        boolean exactAllowed = Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms();
+        try {
+            if (exactAllowed) am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, when, pi);
+            else am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, when, pi);
+        } catch (SecurityException denied) {
+            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, when, pi);
+        }
         TripStore.updateStatus(context, trip.getString("id"), "scheduled");
     }
 
