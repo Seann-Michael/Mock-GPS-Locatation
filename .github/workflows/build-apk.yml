@@ -13,6 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
     steps:
       - name: Check out repository without Node actions
@@ -32,6 +36,19 @@ jobs:
           unzip -q /tmp/gradle.zip -d /tmp
           java -version
           /tmp/gradle-8.9/bin/gradle --version
+
+      - name: Prepare permanent signing when configured
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/mockdrive-release.jks"
+            chmod 600 "$RUNNER_TEMP/mockdrive-release.jks"
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/mockdrive-release.jks" >> "$GITHUB_ENV"
+            echo "Permanent signing key configured."
+          else
+            echo "WARNING: Permanent signing secrets are not configured. This build cannot update a differently signed installation."
+          fi
 
       - name: Build debug APK
         shell: bash
@@ -57,5 +74,5 @@ jobs:
           gh release create "${TAG}" MockDrive.apk \
             --repo "${GITHUB_REPOSITORY}" \
             --title "Mock Drive build ${GITHUB_RUN_NUMBER}" \
-            --notes "Automated Android development build from commit ${GITHUB_SHA}." \
+            --notes "Automated Android development build from commit ${GITHUB_SHA}. Version code $((1000 + GITHUB_RUN_NUMBER))." \
             --prerelease
