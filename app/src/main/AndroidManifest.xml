@@ -11,6 +11,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <application android:allowBackup="true" android:label="Mock Drive" android:supportsRtl="true" android:theme="@style/AppTheme" android:usesCleartextTraffic="true">
         <activity android:name=".StandbyActivity" android:exported="true" android:label="Mock Drive">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
@@ -24,6 +25,7 @@
         <activity android:name=".MainActivity" android:exported="false" />
         <activity android:name=".CampaignActivity" android:exported="false" />
         <activity android:name=".SettingsActivity" android:exported="false" />
+        <activity android:name=".AppUpdateActivity" android:exported="false" />
         <activity android:name=".GeneralSettingsActivity" android:exported="false" />
         <activity android:name=".AccessSettingsActivity" android:exported="false" />
         <activity android:name=".DeviceSettingsActivity" android:exported="false" />
@@ -32,6 +34,7 @@
         <activity android:name=".DiagnosticsActivity" android:exported="false" />
         <service android:name=".MockLocationService" android:exported="false" android:foregroundServiceType="location" />
         <service android:name=".ApiService" android:exported="false" android:foregroundServiceType="dataSync" />
+        <receiver android:name=".UpdateInstallReceiver" android:exported="false" />
         <receiver android:name=".TripAlarmReceiver" android:exported="false" />
         <receiver android:name=".BootReceiver" android:exported="true"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter></receiver>
     </application>
