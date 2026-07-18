@@ -19,7 +19,8 @@ public final class HistoryStore {
             JSONObject r=new JSONObject();r.put("historyId",UUID.randomUUID().toString());r.put("trip",new JSONObject(trip.toString()));r.put("tripId",trip.optString("id"));
             r.put("startTime",System.currentTimeMillis());r.put("endTime",0);r.put("durationMs",0);r.put("miles",estimateMiles(trip));r.put("status","running");
             r.put("startAddress",trip.optString("startAddress",coordinateLabel(trip,0)));r.put("endAddress",trip.optString("endAddress",coordinateLabel(trip,1)));
-            r.put("diagnostics","Navigation started. Trip ID: "+trip.optString("id")+". Configured speed: "+Math.round(trip.optDouble("averageSpeedMph",35))+" mph.");
+            r.put("diagnostics","Navigation record created. Detailed runtime logging begins when the GPS service starts.");
+            r.put("diagnosticFilesAvailable",false);
             JSONArray src=all(c),dst=new JSONArray();dst.put(r);for(int i=0;i<src.length()&&dst.length()<MAX;i++)dst.put(src.optJSONObject(i));write(c,dst);return r;
         }catch(Exception e){return new JSONObject();}
     }
@@ -30,8 +31,24 @@ public final class HistoryStore {
             String id=r.optString("historyId");String normalized=status;
             if("active".equals(status)||"routing".equals(status)||"queued".equals(status))normalized="running";
             if("completed".equals(status))normalized="success";
-            String details="Trip status: "+normalized+". Trip ID: "+trip.optString("id")+". Speed: "+Math.round(trip.optDouble("averageSpeedMph",35))+" mph. Start: "+trip.optString("startAddress",coordinateLabel(trip,0))+". Destination: "+trip.optString("endAddress",coordinateLabel(trip,1))+".";
-            update(c,id,normalized,estimateMiles(trip),details);
+            String existing=r.optString("diagnostics","");
+            String details="Trip status changed to "+normalized+" at "+System.currentTimeMillis()+". Trip ID: "+trip.optString("id")+". Speed: "+Math.round(trip.optDouble("averageSpeedMph",35))+" mph.";
+            update(c,id,normalized,estimateMiles(trip),existing+"\n"+details);
+        }catch(Exception ignored){}
+    }
+
+    public static synchronized void attachDiagnostics(Context c,String historyId,String diagnostics){
+        try{
+            JSONArray a=all(c);
+            for(int i=0;i<a.length();i++){
+                JSONObject r=a.optJSONObject(i);
+                if(r==null||!historyId.equals(r.optString("historyId")))continue;
+                r.put("diagnostics",diagnostics==null?"":diagnostics);
+                r.put("diagnosticFilesAvailable",true);
+                r.put("diagnosticsUpdatedAt",System.currentTimeMillis());
+                break;
+            }
+            write(c,a);
         }catch(Exception ignored){}
     }
 
