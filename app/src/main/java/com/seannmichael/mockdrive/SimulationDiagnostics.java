@@ -1,6 +1,7 @@
 package com.seannmichael.mockdrive;
 
 import android.content.Context;
+import android.content.pm.PackageInfo;
 import android.location.Location;
 import android.os.Build;
 import android.os.SystemClock;
@@ -24,6 +25,7 @@ import java.util.zip.ZipOutputStream;
 public final class SimulationDiagnostics {
     private static final Object LOCK = new Object();
     private static final String ROOT = "simulation_history_diagnostics";
+    private static final String LOCATION_ENGINE_REVISION = "gps-fused-quality-v2";
     private static final SimpleDateFormat TIME = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US);
 
     private SimulationDiagnostics() {}
@@ -41,6 +43,7 @@ public final class SimulationDiagnostics {
             deleteContents(dir);
             write(new File(dir, "trip.json"), pretty(trip == null ? "{}" : trip.toString()));
             try {
+                JSONObject build = buildInfo(context);
                 JSONObject device = new JSONObject()
                         .put("manufacturer", Build.MANUFACTURER)
                         .put("brand", Build.BRAND)
@@ -49,11 +52,18 @@ public final class SimulationDiagnostics {
                         .put("androidVersion", Build.VERSION.RELEASE)
                         .put("apiLevel", Build.VERSION.SDK_INT)
                         .put("package", context.getPackageName())
+                        .put("appVersionName", build.optString("appVersionName", "unknown"))
+                        .put("appVersionCode", build.optLong("appVersionCode", -1))
+                        .put("locationEngineRevision", LOCATION_ENGINE_REVISION)
                         .put("sessionStartedEpochMs", System.currentTimeMillis())
                         .put("elapsedRealtimeMs", SystemClock.elapsedRealtime());
                 write(new File(dir, "device.json"), device.toString(2));
-            } catch (Exception ignored) {}
-            event(context, historyId, "SESSION", "Detailed simulation diagnostics started");
+                event(context, historyId, "SESSION", "Detailed simulation diagnostics started app=" +
+                        device.optString("appVersionName", "unknown") + " (" + device.optLong("appVersionCode", -1) +
+                        ") engine=" + LOCATION_ENGINE_REVISION);
+            } catch (Exception ignored) {
+                event(context, historyId, "SESSION", "Detailed simulation diagnostics started");
+            }
         }
     }
 
@@ -97,6 +107,10 @@ public final class SimulationDiagnostics {
         synchronized (LOCK) {
             try {
                 JSONObject row = runtime == null ? new JSONObject() : new JSONObject(runtime.toString());
+                JSONObject build = buildInfo(context);
+                row.put("appVersionName", build.optString("appVersionName", "unknown"));
+                row.put("appVersionCode", build.optLong("appVersionCode", -1));
+                row.put("locationEngineRevision", LOCATION_ENGINE_REVISION);
                 row.put("timestampEpochMs", System.currentTimeMillis());
                 row.put("elapsedRealtimeMs", SystemClock.elapsedRealtime());
                 row.put("gpsInjected", locationJson(gpsInjected));
@@ -143,11 +157,23 @@ public final class SimulationDiagnostics {
     public static String summary(Context context, String historyId) {
         if (historyId == null || historyId.isEmpty()) return "No diagnostic session is attached to this simulation.";
         File dir = directory(context, historyId);
+        String device = read(new File(dir, "device.json"));
         String state = read(new File(dir, "latest_state.json"));
         String warnings = tail(read(new File(dir, "warnings.log")), 6000);
         String events = tail(read(new File(dir, "events.log")), 16000);
         String exceptions = tail(read(new File(dir, "exceptions.log")), 8000);
         StringBuilder out = new StringBuilder();
+        try {
+            JSONObject info = new JSONObject(device.isEmpty() ? "{}" : device);
+            out.append("App version: ").append(info.optString("appVersionName", "unknown"))
+                    .append(" (").append(info.optLong("appVersionCode", -1)).append(")")
+                    .append("\nLocation engine: ").append(info.optString("locationEngineRevision", "legacy/unknown"))
+                    .append("\nDevice: ").append(info.optString("manufacturer")).append(" ").append(info.optString("model"))
+                    .append(" / Android ").append(info.optString("androidVersion")).append(" API ").append(info.optInt("apiLevel"))
+                    .append("\n\n");
+        } catch (Exception ignored) {
+            out.append("App version: unknown\nLocation engine: legacy/unknown\n\n");
+        }
         out.append("Latest runtime state:\n").append(state.isEmpty() ? "Not recorded" : state);
         if (!warnings.isEmpty()) out.append("\n\nWarnings:\n").append(warnings);
         if (!exceptions.isEmpty()) out.append("\n\nExceptions:\n").append(exceptions);
@@ -178,6 +204,22 @@ public final class SimulationDiagnostics {
             }
             return zip;
         }
+    }
+
+    private static JSONObject buildInfo(Context context) {
+        JSONObject out = new JSONObject();
+        try {
+            PackageInfo info = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
+            out.put("appVersionName", info.versionName == null ? "unknown" : info.versionName);
+            long versionCode = Build.VERSION.SDK_INT >= 28 ? info.getLongVersionCode() : info.versionCode;
+            out.put("appVersionCode", versionCode);
+        } catch (Exception ignored) {
+            try {
+                out.put("appVersionName", "unknown");
+                out.put("appVersionCode", -1);
+            } catch (Exception ignoredAgain) {}
+        }
+        return out;
     }
 
     private static Object locationJson(Location location) throws Exception {
