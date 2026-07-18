@@ -15,6 +15,7 @@ import android.os.IBinder;
 import android.os.SystemClock;
 
 import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationAvailability;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.tasks.Tasks;
 
@@ -39,8 +40,6 @@ public class MockLocationService extends Service {
 
     private static final String CHANNEL = "mock_drive";
     private static final int NOTICE = 42;
-    private static final String FUSED_PROVIDER = "fused";
-
     private volatile boolean running;
     private volatile boolean paused;
     private volatile boolean completed;
@@ -55,6 +54,12 @@ public class MockLocationService extends Service {
     private int totalSegments;
     private String phase = "idle";
     private int configuredUpdateMs = 1000;
+    private volatile boolean gpsProviderReady;
+    private volatile boolean fusedMockReady;
+    private volatile Boolean fusedLocationAvailable;
+    private volatile long fusedAvailabilityCheckedElapsedMs = -1;
+    private volatile String fusedAvailabilityError = "";
+    private volatile boolean fusedAvailabilityRequestInFlight;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -355,27 +360,47 @@ public class MockLocationService extends Service {
     }
 
     private void enableProviders() throws Exception {
-        log("PROVIDER", "Rebuilding GPS test provider");
-        try {
-            manager.removeTestProvider(LocationManager.GPS_PROVIDER);
-            log("PROVIDER", "Existing GPS test provider removed");
-        } catch (Exception e) {
-            log("PROVIDER", "GPS provider removal ignored: " + e.getClass().getSimpleName());
+        if (!gpsProviderReady) {
+            log("PROVIDER", "Creating GPS test provider");
+            try {
+                manager.removeTestProvider(LocationManager.GPS_PROVIDER);
+                log("PROVIDER", "Existing GPS test provider removed");
+            } catch (Exception e) {
+                log("PROVIDER", "GPS provider removal ignored: " + e.getClass().getSimpleName());
+            }
+            manager.addTestProvider(LocationManager.GPS_PROVIDER, false, false, false, false, true, true, true,
+                    Criteria.POWER_LOW, Criteria.ACCURACY_FINE);
+            manager.setTestProviderEnabled(LocationManager.GPS_PROVIDER, true);
+            gpsProviderReady = true;
+            log("PROVIDER", "GPS test provider enabled=" + manager.isProviderEnabled(LocationManager.GPS_PROVIDER));
+        } else {
+            try { manager.setTestProviderEnabled(LocationManager.GPS_PROVIDER, true); }
+            catch (Exception e) { log("PROVIDER", "GPS provider re-enable ignored: " + e.getClass().getSimpleName()); }
+            log("PROVIDER", "Reusing existing GPS test provider between hold and drive");
         }
-        manager.addTestProvider(LocationManager.GPS_PROVIDER, false, false, false, false, true, true, true,
-                Criteria.POWER_LOW, Criteria.ACCURACY_FINE);
-        manager.setTestProviderEnabled(LocationManager.GPS_PROVIDER, true);
-        log("PROVIDER", "GPS test provider enabled=" + manager.isProviderEnabled(LocationManager.GPS_PROVIDER));
 
-        long started = SystemClock.elapsedRealtime();
-        Tasks.await(fusedClient.setMockMode(true), 5, TimeUnit.SECONDS);
-        log("PROVIDER", "Fused mock mode enabled in " + (SystemClock.elapsedRealtime() - started) + " ms");
+        if (!fusedMockReady) {
+            long started = SystemClock.elapsedRealtime();
+            Tasks.await(fusedClient.setMockMode(true), 5, TimeUnit.SECONDS);
+            fusedMockReady = true;
+            try {
+                Tasks.await(fusedClient.flushLocations(), 3, TimeUnit.SECONDS);
+                log("PROVIDER", "Fused pending locations flushed after mock mode enabled");
+            } catch (Exception e) {
+                log("PROVIDER", "Fused flush did not complete: " + e.getClass().getSimpleName());
+            }
+            log("PROVIDER", "Fused mock mode enabled in " + (SystemClock.elapsedRealtime() - started) + " ms");
+        } else {
+            log("PROVIDER", "Reusing existing Fused mock session between hold and drive");
+        }
+        refreshFusedAvailability();
     }
 
     private void injectAndRecord(Point point, float heading, float speed, float accuracy, JSONObject runtime) {
         long started = SystemClock.elapsedRealtime();
         Location gpsInjected = buildLocation(LocationManager.GPS_PROVIDER, point, heading, speed, accuracy);
-        Location fusedInjected = buildLocation(FUSED_PROVIDER, point, heading, speed, accuracy);
+        // Fused mock input is still a GPS-quality fix. Keeping provider="gps" avoids presenting it as a synthetic provider.
+        Location fusedInjected = new Location(gpsInjected);
         Location gpsReported = null;
         Location fusedReported = null;
         boolean gpsSuccess = false;
@@ -399,6 +424,7 @@ public class MockLocationService extends Service {
             error("Fused injection", e);
         }
 
+        refreshFusedAvailability();
         injectionCount++;
         try { gpsReported = manager.getLastKnownLocation(LocationManager.GPS_PROVIDER); }
         catch (Throwable e) { error("GPS readback", e); }
@@ -421,6 +447,16 @@ public class MockLocationService extends Service {
                     .put("fusedInjectionSucceeded", fusedSuccess)
                     .put("gpsInjectionError", gpsError)
                     .put("fusedInjectionError", fusedError)
+                    .put("fusedAvailabilityKnown", fusedLocationAvailable != null)
+                    .put("fusedLocationAvailable", fusedLocationAvailable != null && fusedLocationAvailable)
+                    .put("fusedAvailabilityAgeMs", fusedAvailabilityCheckedElapsedMs < 0 ? -1 : Math.max(0, SystemClock.elapsedRealtime() - fusedAvailabilityCheckedElapsedMs))
+                    .put("fusedAvailabilityError", fusedAvailabilityError)
+                    .put("gpsInjectedComplete", locationComplete(gpsInjected))
+                    .put("fusedInjectedComplete", locationComplete(fusedInjected))
+                    .put("gpsInjectedWallClockAgeMs", Math.max(0, System.currentTimeMillis() - gpsInjected.getTime()))
+                    .put("fusedInjectedWallClockAgeMs", Math.max(0, System.currentTimeMillis() - fusedInjected.getTime()))
+                    .put("gpsInjectedElapsedAgeMs", elapsedAgeMs(gpsInjected))
+                    .put("fusedInjectedElapsedAgeMs", elapsedAgeMs(fusedInjected))
                     .put("requestedLatitude", point.lat)
                     .put("requestedLongitude", point.lon)
                     .put("requestedAccuracyMeters", accuracy)
@@ -437,12 +473,49 @@ public class MockLocationService extends Service {
         if (injectionCount == 1 || injectionCount % 10 == 0) {
             log("HEARTBEAT", "injection=" + injectionCount + " segment=" + currentSegment + "/" + totalSegments +
                     " gpsSuccess=" + gpsSuccess + " fusedSuccess=" + fusedSuccess +
+                    " fusedAvailable=" + (fusedLocationAvailable == null ? "unknown" : fusedLocationAvailable) +
                     " gpsDeltaMeters=" + gpsDelta + " fusedDeltaMeters=" + fusedDelta +
                     " workMs=" + (SystemClock.elapsedRealtime() - started));
         }
         if (!fusedSuccess) warning("Fused location injection failed at update " + injectionCount + ": " + fusedError);
         if (fusedReported == null) warning("Fused provider returned no location at update " + injectionCount);
         else if (fusedDelta > 5) warning("Fused provider differs from requested location by " + fusedDelta + " meters at update " + injectionCount);
+    }
+
+    private void refreshFusedAvailability() {
+        if (fusedAvailabilityRequestInFlight) return;
+        fusedAvailabilityRequestInFlight = true;
+        try {
+            fusedClient.getLocationAvailability().addOnCompleteListener(task -> {
+                fusedAvailabilityRequestInFlight = false;
+                fusedAvailabilityCheckedElapsedMs = SystemClock.elapsedRealtime();
+                if (task.isSuccessful()) {
+                    LocationAvailability availability = task.getResult();
+                    fusedLocationAvailable = availability != null && availability.isLocationAvailable();
+                    fusedAvailabilityError = "";
+                } else {
+                    Throwable error = task.getException();
+                    fusedLocationAvailable = null;
+                    fusedAvailabilityError = error == null ? "Availability task failed" : error.getClass().getSimpleName() + ": " + safe(error.getMessage());
+                }
+            });
+        } catch (Throwable error) {
+            fusedAvailabilityRequestInFlight = false;
+            fusedAvailabilityCheckedElapsedMs = SystemClock.elapsedRealtime();
+            fusedLocationAvailable = null;
+            fusedAvailabilityError = error.getClass().getSimpleName() + ": " + safe(error.getMessage());
+        }
+    }
+
+    private boolean locationComplete(Location location) {
+        if (location == null) return false;
+        if (Build.VERSION.SDK_INT >= 33) return location.isComplete();
+        return location.getProvider() != null && location.hasAccuracy() && location.getTime() != 0 && location.getElapsedRealtimeNanos() != 0;
+    }
+
+    private long elapsedAgeMs(Location location) {
+        if (location == null || location.getElapsedRealtimeNanos() <= 0) return -1;
+        return Math.max(0, (SystemClock.elapsedRealtimeNanos() - location.getElapsedRealtimeNanos()) / 1_000_000L);
     }
 
     private Location buildLocation(String provider, Point point, float heading, float speed, float accuracy) {
@@ -506,9 +579,20 @@ public class MockLocationService extends Service {
         phase = "stopped";
         try { manager.removeTestProvider(LocationManager.GPS_PROVIDER); }
         catch (Exception e) { log("PROVIDER", "GPS provider removal on stop: " + e.getClass().getSimpleName()); }
-        try { Tasks.await(fusedClient.setMockMode(false), 3, TimeUnit.SECONDS); }
-        catch (Exception e) { log("PROVIDER", "Fused mock disable on stop: " + e.getClass().getSimpleName()); }
-        log("SERVICE", "Foreground service stopped; GPS provider removed and Fused mock mode disabled");
+        gpsProviderReady = false;
+        fusedMockReady = false;
+        fusedLocationAvailable = null;
+        fusedAvailabilityCheckedElapsedMs = -1;
+        fusedAvailabilityError = "";
+        try {
+            fusedClient.setMockMode(false).addOnCompleteListener(task -> {
+                if (task.isSuccessful()) log("PROVIDER", "Fused mock mode disabled");
+                else log("PROVIDER", "Fused mock disable failed asynchronously");
+            });
+        } catch (Exception e) {
+            log("PROVIDER", "Fused mock disable on stop: " + e.getClass().getSimpleName());
+        }
+        log("SERVICE", "Foreground service stopped; GPS provider removed and Fused mock shutdown requested");
         if (userRequested && !wasCompleted && !currentTripId.isEmpty()) {
             TripStore.updateStatus(this, currentTripId, "stopped");
         }

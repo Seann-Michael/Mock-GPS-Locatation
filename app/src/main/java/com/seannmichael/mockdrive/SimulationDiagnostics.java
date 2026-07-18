@@ -186,13 +186,30 @@ public final class SimulationDiagnostics {
                 .put("provider", location.getProvider())
                 .put("latitude", location.getLatitude())
                 .put("longitude", location.getLongitude())
+                .put("hasAccuracy", location.hasAccuracy())
                 .put("accuracyMeters", location.hasAccuracy() ? location.getAccuracy() : -1)
+                .put("hasSpeed", location.hasSpeed())
                 .put("speedMps", location.hasSpeed() ? location.getSpeed() : -1)
                 .put("speedMph", location.hasSpeed() ? location.getSpeed() * 2.2369362920544 : -1)
+                .put("hasBearing", location.hasBearing())
                 .put("bearingDegrees", location.hasBearing() ? location.getBearing() : -1)
                 .put("timeEpochMs", location.getTime())
+                .put("wallClockAgeMs", Math.max(0, System.currentTimeMillis() - location.getTime()))
                 .put("elapsedRealtimeNanos", location.getElapsedRealtimeNanos())
+                .put("elapsedRealtimeAgeMs", elapsedAgeMs(location))
+                .put("complete", locationComplete(location))
                 .put("isMock", Build.VERSION.SDK_INT >= 31 ? location.isMock() : location.isFromMockProvider());
+    }
+
+    private static boolean locationComplete(Location location) {
+        if (location == null) return false;
+        if (Build.VERSION.SDK_INT >= 33) return location.isComplete();
+        return location.getProvider() != null && location.hasAccuracy() && location.getTime() != 0 && location.getElapsedRealtimeNanos() != 0;
+    }
+
+    private static long elapsedAgeMs(Location location) {
+        if (location == null || location.getElapsedRealtimeNanos() <= 0) return -1;
+        return Math.max(0, (SystemClock.elapsedRealtimeNanos() - location.getElapsedRealtimeNanos()) / 1_000_000L);
     }
 
     private static String pretty(String json) {

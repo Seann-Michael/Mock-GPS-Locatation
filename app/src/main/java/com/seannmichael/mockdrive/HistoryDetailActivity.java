@@ -175,6 +175,12 @@ public class HistoryDetailActivity extends BaseActivity {
         if (bearing >= 0) out.append("\nRequested heading: ").append(String.format(Locale.US, "%.2f°", bearing));
         out.append("\nGPS injection: ").append(state.optBoolean("gpsInjectionSucceeded", false) ? "Success" : "FAILED");
         out.append("\nFused injection: ").append(state.optBoolean("fusedInjectionSucceeded", false) ? "Success" : "FAILED");
+        out.append("\nFused location available: ");
+        if (!state.optBoolean("fusedAvailabilityKnown", false)) out.append("Unknown");
+        else out.append(state.optBoolean("fusedLocationAvailable", false));
+        out.append("\nFused availability age: ").append(state.optLong("fusedAvailabilityAgeMs", -1)).append(" ms");
+        out.append("\nGPS injected location complete: ").append(state.optBoolean("gpsInjectedComplete", false));
+        out.append("\nFused injected location complete: ").append(state.optBoolean("fusedInjectedComplete", false));
         out.append("\nGPS provider enabled: ").append(state.optBoolean("gpsProviderEnabled", false));
         out.append("\nWorker alive: ").append(state.optBoolean("workerAlive", false));
         out.append("\nInjection work time: ").append(state.optLong("injectionWorkDurationMs", -1)).append(" ms");
@@ -194,7 +200,8 @@ public class HistoryDetailActivity extends BaseActivity {
     }
 
     private String coordinate(JSONObject location) {
-        return String.format(Locale.US, "%.7f, %.7f at %.2f mph / %.2f°",
+        return String.format(Locale.US, "%s %.7f, %.7f at %.2f mph / %.2f°",
+                location.optString("provider", "unknown"),
                 location.optDouble("latitude"),
                 location.optDouble("longitude"),
                 location.optDouble("speedMph", -1),
