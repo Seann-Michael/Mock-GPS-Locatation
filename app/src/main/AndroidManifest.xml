@@ -21,6 +21,9 @@
         <activity android:name=".MainActivity" android:exported="false" />
         <activity android:name=".CampaignActivity" android:exported="false" />
         <activity android:name=".SettingsActivity" android:exported="false" />
+        <activity android:name=".GeneralSettingsActivity" android:exported="false" />
+        <activity android:name=".AccessSettingsActivity" android:exported="false" />
+        <activity android:name=".DeviceSettingsActivity" android:exported="false" />
         <activity android:name=".LicenseActivity" android:exported="false" />
         <activity android:name=".BillingActivity" android:exported="false" />
         <activity android:name=".DiagnosticsActivity" android:exported="false" />
