@@ -11,6 +11,9 @@ public class TripAlarmReceiver extends BroadcastReceiver {
         String id = intent == null ? null : intent.getStringExtra("trip_id");
         if (id == null) return;
         JSONObject trip = TripStore.get(context, id);
-        if (trip != null) TripScheduler.launch(context, trip);
+        if (trip != null) {
+            TripScheduler.launch(context, trip);
+            TripScheduler.scheduleNext(context, trip);
+        }
     }
 }
