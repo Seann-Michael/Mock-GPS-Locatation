@@ -35,6 +35,7 @@ public class MockLocationService extends Service {
     private static final int NOTICE = 42;
     private volatile boolean running;
     private volatile boolean paused;
+    private volatile boolean providerReady;
     private Thread worker;
     private LocationManager manager;
     private Point heldPoint;
@@ -66,18 +67,24 @@ public class MockLocationService extends Service {
     private void teleport(double lat, double lon) {
         stopWorker();
         try {
-            enableProvider();
+            ensureProvider();
             heldPoint = new Point(lat, lon);
             running = true;
             inject(heldPoint, 0f, 0f, 3f);
             worker = new Thread(() -> {
                 while (running && heldPoint != null) {
-                    try { inject(heldPoint, 0f, 0f, 3f); Thread.sleep(1000); }
-                    catch (InterruptedException e) { return; }
+                    try {
+                        inject(heldPoint, 0f, 0f, 3f);
+                        Thread.sleep(500);
+                    } catch (InterruptedException e) {
+                        return;
+                    }
                 }
             }, "mock-hold");
             worker.start();
-        } catch (SecurityException e) { updateNotice("Select Mock Drive as mock location app"); }
+        } catch (SecurityException e) {
+            updateNotice("Select Mock Drive as mock location app");
+        }
     }
 
     private void startTrip(String tripJson) {
@@ -93,7 +100,10 @@ public class MockLocationService extends Service {
                 List<Point> points = parse(coordinates);
                 if (points.size() < 2) throw new Exception("Route is empty");
 
-                enableProvider();
+                // Do not remove and recreate the provider here. Google Maps is already
+                // consuming the provider established by teleport(), and resetting it
+                // causes a brief outage that Maps can interpret as GPS signal loss.
+                ensureProvider();
                 running = true;
                 paused = false;
                 heldPoint = null;
@@ -115,13 +125,19 @@ public class MockLocationService extends Service {
                 inject(current, 0f, 0f, accuracy);
 
                 while (running && segment < points.size() - 1) {
-                    while (paused && running) { inject(current, 0f, 0f, accuracy); Thread.sleep(500); }
+                    while (paused && running) {
+                        inject(current, 0f, 0f, accuracy);
+                        Thread.sleep(500);
+                    }
                     if (!running) break;
 
                     if (randomStops && random.nextInt(100) < randomStopChance) {
                         int seconds = 1 + random.nextInt(Math.max(1, randomStopMax));
                         updateNotice("Traffic stop: " + seconds + " sec");
-                        for (int s = 0; s < seconds && running; s++) { inject(current, 0f, 0f, accuracy); Thread.sleep(1000); }
+                        for (int s = 0; s < seconds && running; s++) {
+                            inject(current, 0f, 0f, accuracy);
+                            Thread.sleep(1000);
+                        }
                     }
 
                     double mph = averageMph * (1 + ((random.nextDouble() * 2 - 1) * variation));
@@ -142,7 +158,9 @@ public class MockLocationService extends Service {
                         length = distance(from, to);
                     }
                     if (segment >= points.size() - 1) break;
-                    from = points.get(segment); to = points.get(segment + 1); length = distance(from, to);
+                    from = points.get(segment);
+                    to = points.get(segment + 1);
+                    length = distance(from, to);
                     current = interpolate(from, to, Math.min(1, onSegment / Math.max(.1, length)));
                     inject(current, bearing(from, to), (float) metersPerSecond, accuracy);
                     updateNotice("Driving " + Math.round(mph) + " mph");
@@ -170,7 +188,10 @@ public class MockLocationService extends Service {
                     updateNotice("Destination reached");
                     if (hold) {
                         heldPoint = current;
-                        while (running) { inject(heldPoint, 0f, 0f, accuracy); Thread.sleep(1000); }
+                        while (running) {
+                            inject(heldPoint, 0f, 0f, accuracy);
+                            Thread.sleep(500);
+                        }
                     }
                 }
             } catch (SecurityException e) {
@@ -193,19 +214,40 @@ public class MockLocationService extends Service {
         return out;
     }
 
-    private void enableProvider() {
-        try { manager.removeTestProvider(LocationManager.GPS_PROVIDER); } catch (Exception ignored) {}
-        manager.addTestProvider(LocationManager.GPS_PROVIDER, false, false, false, false, true, true, true, Criteria.POWER_LOW, Criteria.ACCURACY_FINE);
+    private synchronized void ensureProvider() {
+        if (providerReady) {
+            try {
+                manager.setTestProviderEnabled(LocationManager.GPS_PROVIDER, true);
+                return;
+            } catch (RuntimeException ignored) {
+                providerReady = false;
+            }
+        }
+        try {
+            manager.addTestProvider(LocationManager.GPS_PROVIDER, false, false, false, false, true, true, true,
+                    Criteria.POWER_LOW, Criteria.ACCURACY_FINE);
+        } catch (IllegalArgumentException ignored) {
+            // The provider already exists, which is the desired state.
+        }
         manager.setTestProviderEnabled(LocationManager.GPS_PROVIDER, true);
+        providerReady = true;
     }
 
     private void inject(Point p, float bearing, float speed, float accuracy) {
+        ensureProvider();
         Location l = new Location(LocationManager.GPS_PROVIDER);
-        l.setLatitude(p.lat); l.setLongitude(p.lon); l.setAccuracy(accuracy); l.setAltitude(0);
-        l.setBearing(bearing); l.setSpeed(speed); l.setTime(System.currentTimeMillis());
+        l.setLatitude(p.lat);
+        l.setLongitude(p.lon);
+        l.setAccuracy(accuracy);
+        l.setAltitude(0);
+        l.setBearing(bearing);
+        l.setSpeed(speed);
+        l.setTime(System.currentTimeMillis());
         l.setElapsedRealtimeNanos(SystemClock.elapsedRealtimeNanos());
         if (Build.VERSION.SDK_INT >= 26) {
-            l.setBearingAccuracyDegrees(3f); l.setSpeedAccuracyMetersPerSecond(.5f); l.setVerticalAccuracyMeters(accuracy);
+            l.setBearingAccuracyDegrees(3f);
+            l.setSpeedAccuracyMetersPerSecond(.5f);
+            l.setVerticalAccuracyMeters(accuracy);
         }
         manager.setTestProviderLocation(LocationManager.GPS_PROVIDER, l);
     }
@@ -213,13 +255,18 @@ public class MockLocationService extends Service {
     private void stopEverything() {
         stopWorker();
         try { manager.removeTestProvider(LocationManager.GPS_PROVIDER); } catch (Exception ignored) {}
-        stopForeground(true); stopSelf();
+        providerReady = false;
+        stopForeground(true);
+        stopSelf();
     }
 
     private void stopWorker() {
-        running = false; paused = false; heldPoint = null;
-        if (worker != null) worker.interrupt();
+        running = false;
+        paused = false;
+        heldPoint = null;
+        Thread old = worker;
         worker = null;
+        if (old != null) old.interrupt();
     }
 
     private void createChannel() {
@@ -235,20 +282,27 @@ public class MockLocationService extends Service {
         return b.setContentTitle("Mock Drive").setContentText(text).setSmallIcon(android.R.drawable.ic_menu_mylocation).setOngoing(true).setContentIntent(pi).build();
     }
 
-    private void updateNotice(String text) { ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(NOTICE, notice(text)); }
+    private void updateNotice(String text) {
+        ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(NOTICE, notice(text));
+    }
+
     private static double clamp(double v, double min, double max) { return Math.max(min, Math.min(max, v)); }
     private static double distance(Point a, Point b) {
         double earth = 6371000, p1 = Math.toRadians(a.lat), p2 = Math.toRadians(b.lat);
-        double dp = Math.toRadians(b.lat-a.lat), dl = Math.toRadians(b.lon-a.lon);
-        double h = Math.sin(dp/2)*Math.sin(dp/2)+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)*Math.sin(dl/2);
-        return earth*2*Math.atan2(Math.sqrt(h), Math.sqrt(1-h));
+        double dp = Math.toRadians(b.lat - a.lat), dl = Math.toRadians(b.lon - a.lon);
+        double h = Math.sin(dp / 2) * Math.sin(dp / 2) + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) * Math.sin(dl / 2);
+        return earth * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
     }
-    private static Point interpolate(Point a, Point b, double f) { return new Point(a.lat+(b.lat-a.lat)*f, a.lon+(b.lon-a.lon)*f); }
+    private static Point interpolate(Point a, Point b, double f) { return new Point(a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f); }
     private static float bearing(Point a, Point b) {
-        double p1=Math.toRadians(a.lat), p2=Math.toRadians(b.lat), dl=Math.toRadians(b.lon-a.lon);
-        double y=Math.sin(dl)*Math.cos(p2), x=Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl);
-        return (float)((Math.toDegrees(Math.atan2(y,x))+360)%360);
+        double p1 = Math.toRadians(a.lat), p2 = Math.toRadians(b.lat), dl = Math.toRadians(b.lon - a.lon);
+        double y = Math.sin(dl) * Math.cos(p2), x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+        return (float) ((Math.toDegrees(Math.atan2(y, x)) + 360) % 360);
     }
+
     @Override public IBinder onBind(Intent intent) { return null; }
-    private static final class Point { final double lat, lon; Point(double lat, double lon) { this.lat=lat; this.lon=lon; } }
+    private static final class Point {
+        final double lat, lon;
+        Point(double lat, double lon) { this.lat = lat; this.lon = lon; }
+    }
 }
